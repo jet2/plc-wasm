@@ -57,6 +57,7 @@ current publishing token lacks the GitHub workflow permission needed to install 
 - Package validation, execution fuel, memory limits and persistent cycle state.
 - Traps reject partial output publication and latch the runtime fault state.
 - S7 DB serialization, named aliases and queued writes at scan boundaries.
+- Snap7 loopback server with validated read/write callbacks and native client tests.
 
 Local tests cover generated cyclic programs, initialization, state retention,
 array bounds and runtime faults. These checks are not a proof of equivalence
@@ -73,7 +74,11 @@ The offline S7 adapter generates a separate DB map, checks exported read/write
 addresses and translates snapshots and queued writes. See [S7.md](S7.md) for
 generation, limits, access policy and the `s7-run` replay command.
 
-Remaining work includes Modbus master, Snap7 server,
+The `serve` command exposes mapped DBs on a separate loopback test port through
+a dynamically loaded native Snap7 library. See [SNAP7.md](SNAP7.md) for setup,
+the supported data access contract and CPU/system-service limitations.
+
+Remaining work includes Modbus master, live WinCC commissioning,
 scheduling/device fault policies and comparison against the reference PLC.
 S7 status flags, general library/system functions and whole aggregate assignment
 remain unsupported. String overflow and non-finite REAL results trap deliberately.

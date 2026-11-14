@@ -179,3 +179,13 @@ region or expose scratch memory. The map, generated per project, contains the
 external DB numbering/layout and write permissions. Publication uses owned DB
 snapshots and a generation counter. See [S7.md](S7.md) for the access and fault
 contract. No live Snap7 or WinCC connection is enabled by this milestone.
+
+## Snap7 adapter (fifth milestone)
+
+The host can load a native Snap7 library and expose the mapped DBs on a loopback
+test port. The Wasm ABI and per-project map remain unchanged. Callback reads
+copy published state; callback writes only stage validated values. Native worker
+access and scans are serialized by the bridge mutex, without network I/O under
+that mutex. Faulted state is rejected by network reads. See [SNAP7.md](SNAP7.md)
+for native-library setup, lifecycle, acknowledgements and compatibility limits.
+Live WinCC integration remains pending explicit user direction.
