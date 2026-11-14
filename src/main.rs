@@ -2,6 +2,7 @@ use anyhow::{Result, bail, ensure};
 use serde::Deserialize;
 use station_runtime::s7::{Bridge, Map};
 use station_runtime::{Manifest, Package, Runtime};
+use std::time::{Duration, Instant};
 use std::{env, fs, io::Read, path::Path};
 
 fn bounded_read(path: impl AsRef<Path>) -> Result<Vec<u8>> {
@@ -51,6 +52,71 @@ enum S7Action {
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     match args.get(1).map(String::as_str) {
+        Some("monitor") if (4..=6).contains(&args.len()) => {
+            let period_ms: u32 = args.get(4).map(|s| s.parse()).transpose()?.unwrap_or(100);
+            let limit: u64 = args.get(5).map(|s| s.parse()).transpose()?.unwrap_or(0);
+            ensure!(
+                (1..=60000).contains(&period_ms),
+                "period must be 1..60000 ms"
+            );
+            let started = Instant::now();
+            let runtime = Runtime::load(Package::decode(&bounded_read(&args[2])?)?)?;
+            let inputs = vec![0; runtime.manifest.inputs.size as usize];
+            let memory_bytes = runtime.manifest.memory_bytes;
+            let state_bytes = runtime.manifest.outputs.size;
+            let map: Map =
+                serde_json::from_slice(&bounded_read_limit(&args[3], 64 * 1024 * 1024)?)?;
+            let mut bridge = Bridge::new(runtime, map)?;
+            println!(
+                "{}",
+                serde_json::json!({"event":"ready", "pid":std::process::id(),
+                "mode":"offline-monitor", "period_ms":period_ms, "load_ms":started.elapsed().as_secs_f64()*1000.0,
+                "wasm_memory_bytes":memory_bytes, "state_bytes":state_bytes, "blocks":bridge.map().blocks.len(),
+                "fields":bridge.map().blocks.iter().map(|b| b.fields.len()).sum::<usize>()})
+            );
+            let period = Duration::from_millis(period_ms as u64);
+            let mut deadline = Instant::now();
+            let mut reported = Instant::now();
+            let mut count = 0u64;
+            let mut total_ms = 0.0f64;
+            let mut maximum_ms = 0.0f64;
+            let mut overruns = 0u64;
+            loop {
+                std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
+                let cycle_start = Instant::now();
+                bridge.cycle(&inputs, period_ms)?;
+                let elapsed = cycle_start.elapsed();
+                count += 1;
+                total_ms += elapsed.as_secs_f64() * 1000.0;
+                maximum_ms = maximum_ms.max(elapsed.as_secs_f64() * 1000.0);
+                deadline += period;
+                if Instant::now() > deadline {
+                    overruns += 1;
+                    // Skip missed deadlines rather than execute a burst of catch-up scans.
+                    deadline = Instant::now();
+                }
+                if bridge.generation() == 1
+                    || reported.elapsed() >= Duration::from_secs(10)
+                    || limit != 0 && bridge.generation() >= limit
+                {
+                    println!(
+                        "{}",
+                        serde_json::json!({"event":"cycles", "generation":bridge.generation(),
+                        "uptime_s":started.elapsed().as_secs_f64(), "samples":count,
+                        "mean_cycle_ms":total_ms/count as f64, "max_cycle_ms":maximum_ms,
+                        "missed_deadlines":overruns})
+                    );
+                    count = 0;
+                    total_ms = 0.0;
+                    maximum_ms = 0.0;
+                    overruns = 0;
+                    reported = Instant::now();
+                }
+                if limit != 0 && bridge.generation() >= limit {
+                    break;
+                }
+            }
+        }
         Some("s7-run") if args.len() == 5 => {
             let runtime = Runtime::load(Package::decode(&bounded_read(&args[2])?)?)?;
             let inputs = vec![0; runtime.manifest.inputs.size as usize];
@@ -116,7 +182,7 @@ fn main() -> Result<()> {
             );
         }
         _ => bail!(
-            "Usage: station-runtime pack MANIFEST.json MODULE.wat OUTPUT.pkg\n       station-runtime run PROGRAM.pkg [CYCLES]\n       station-runtime s7-run PROGRAM.pkg MAP.json ACTIONS.json\nOffline execution: no Modbus/Snap7 network drivers."
+            "Usage: station-runtime pack MANIFEST.json MODULE.wat OUTPUT.pkg\n       station-runtime run PROGRAM.pkg [CYCLES]\n       station-runtime s7-run PROGRAM.pkg MAP.json ACTIONS.json\n       station-runtime monitor PROGRAM.pkg MAP.json [PERIOD_MS] [CYCLES]\nMonitor defaults: 100 ms, unlimited cycles (0). Offline execution: no Modbus/Snap7 network drivers."
         ),
     }
     Ok(())
