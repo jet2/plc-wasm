@@ -10,7 +10,7 @@ from scl_codegen import Compiler
 from scl_frontend import CompileError, Parser
 
 
-def inspect(path, runtime=None):
+def inspect(path, runtime=None, system_profile='strict'):
     project = load_project(path)
     parsed, parse_errors, generated, codegen_errors = [], {}, [], {}
     validated, validation_errors = [], {}
@@ -25,7 +25,7 @@ def inspect(path, runtime=None):
             parse_errors[name] = str(error)
             continue
         try:
-            manifest, wat, _ = Compiler(project).compile(name)
+            manifest, wat, _ = Compiler(project, system_profile).compile(name)
             generated.append(name)
         except CompileError as error:
             codegen_errors[name] = str(error)
@@ -53,11 +53,12 @@ def main():
     parser.add_argument("--project", action="append", required=True, help="NAME=PATH of a local project")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--runtime", type=Path, help="also validate every emitted module using the native runtime pack command")
+    parser.add_argument('--system-profile', choices=['strict', 'cyclic-sim'], default='strict')
     args = parser.parse_args()
     paths = dict(p.split("=", 1) for p in args.project)
     result = {"method": "parse and emit WAT per entry with reachable dependencies; optional pack/load/init validation; no scan execution or PLC comparison", "projects": {}}
     for name, path in paths.items():
-        report = inspect(Path(path), args.runtime.resolve() if args.runtime else None)
+        report = inspect(Path(path), args.runtime.resolve() if args.runtime else None, args.system_profile)
         result["projects"][name] = report
         print(name, "parsed", report["parsed_count"], "generated", report["generated_count"], "validated", report["validated_count"], flush=True)
     args.output.parent.mkdir(parents=True, exist_ok=True)

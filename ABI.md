@@ -81,8 +81,8 @@ same module; recursive call graphs and unresolved externals are rejected.
 
 Structures are concatenations of internal fields; integer/BOOL fields occupy
 four bytes, arrays use row-major element strides and declared lower bounds.
-REAL storage and empty STRING defaults may be reserved inside structures;
-computation on these types is rejected. This internal layout still has no S7
+The third milestone adds REAL and STRING computation as described below.
+This internal layout still has no S7
 packing, physical address aliasing, device I/O or externally writable inputs.
 
 Supported control flow: IF/ELSIF/ELSE, CASE with integer labels/ranges,
@@ -109,8 +109,8 @@ operator precedence and integer division is Siemens
 
 ## Remaining runtime integration
 
-The compiler will eventually produce the full cyclic station program and a
-verified external S7 memory layout. Modbus remains a master/client owned by
+The compiler can emit full reachable cyclic programs for offline simulation;
+a verified external S7 memory layout is still required. Modbus remains a master/client owned by
 Rust, and Snap7 serves S7 reads/writes independently. Network delays must not
 block the logical cycle; commands are accepted at defined cycle boundaries.
 Device addresses, stale-input handling, command acknowledgements, fault
@@ -119,3 +119,52 @@ output policy and persistent-state migration remain to be specified.
 The implemented engine APIs are documented by the Wasmi project:
 [fuel configuration](https://docs.rs/wasmi/2.0.0/wasmi/struct.Config.html),
 [store limits](https://docs.rs/wasmi/2.0.0/wasmi/struct.StoreLimitsBuilder.html).
+
+## Extended offline compiler (third milestone)
+
+The ABI and native executable are unchanged. Persistent globals remain the
+output snapshot. Compiler-owned temporary memory, validity masks and string
+buffers are allocated after it and are excluded from outputs. Each reachable
+function owns scratch storage; recursive calls remain forbidden. Temporary
+validity resets at each function entry, including repeated calls in one scan.
+
+REAL uses Wasm f32 operations and round-to-nearest binary32 constants. Signed
+integers can promote to REAL; implicit REAL-to-integer conversion is rejected.
+Non-finite values and results trap. This diagnostic policy differs from CPU
+status-word handling. REAL values cannot yet be selected as manifest watches.
+
+STRING uses capacity and current-length bytes followed by Windows-1251 bytes.
+Capacity is at most 254. Supported operations are assignment, comparisons, LEN,
+two-argument CONCAT and DINT_TO_STRING with an explicit sign. Each expression
+call has a distinct scratch result, so nested calls and self-assignment preserve
+their operands. Unsupported dollar escapes and unrepresentable characters are
+rejected. Overflow traps, including CONCAT overflow: the compiler does not yet
+model S7 truncation with BR/OK status. The reference behavior is documented in
+Siemens [STRING functions](https://support.industry.siemens.com/cs/attachments/22506480/S7_SCL_String_Parameterzuweisung_e.pdf)
+and [system and standard functions](https://cache.industry.siemens.com/dl/files/604/44240604/att_67003/v1/s7sfc_en-EN.pdf).
+
+Local aggregate fields and elements are addressable. Whole aggregate assignment
+is rejected. Numeric AT groups use separate big-endian storage with BYTE/WORD/
+INT/DWORD/DINT/REAL widths and word-aligned structures. BOOL bit packing, STRING
+overlays and odd-sized overlay arrays are rejected. Per-byte validity is shared
+by all views: partially initialized values cannot be read through a wider view.
+This limited local representation is not an external DB serializer.
+
+SHR accepts byte/word/dword input and a signed count; counts at or above the
+operand width produce zero. Negative counts trap rather than wrap modulo 32.
+
+The default system profile is `strict`. Explicit `--system-profile cyclic-sim`
+allows only constant DIS_IRT MODE=1, OB_NR=80. It records an asynchronous-error
+class disable flag in persistent memory and returns success. The flag is exposed
+as `runtime.async_errors_disabled`. This is a simulation of the requested state,
+not CPU interrupt delivery, diagnostic buffering or watchdog emulation; there is
+no event dispatcher yet. Other modes/classes and dynamic requests are rejected.
+Siemens describes MODE=1 as disabling the entire class associated with that OB,
+not just one OB; see the system-function reference above.
+
+`--fuel-per-call` defaults to 10,000,000 and accepts 1..100,000,000, matching
+the native validation limit. Large startup paths may need a larger package
+budget. Fuel remains enforced for every call, independently of the interrupt
+profile. Offline cycle execution does not provide wall-clock scheduling or a
+real-time guarantee. Linux execution and PLCSIM equivalence remain separate
+validation steps; compiler acceptance alone proves neither.

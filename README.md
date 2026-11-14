@@ -52,6 +52,7 @@ current publishing token lacks the GitHub workflow permission needed to install 
 
 - Located lexer/parser, case-insensitive symbols and typed expressions.
 - Integer and boolean operations, structures and bounded multidimensional arrays.
+- REAL arithmetic, bounded STRING operations and numeric local AT overlays.
 - Conditional branches, case selection, loops, returns and linked VOID functions.
 - Package validation, execution fuel, memory limits and persistent cycle state.
 - Traps reject partial output publication and latch the runtime fault state.
@@ -60,9 +61,17 @@ Local tests cover generated cyclic programs, initialization, state retention,
 array bounds and runtime faults. These checks are not a proof of equivalence
 with STEP 7 or PLCSIM. Validation details and source-related reports stay local.
 
-Full station execution is not implemented yet. Remaining work includes overlays,
-REAL/STRING operations, aggregate temporaries, library/system functions, S7 memory
-serialization, Modbus master, Snap7 server and scheduling/device fault policies.
+Full reachable cyclic programs can now be compiled for offline execution with
+the explicitly selected `cyclic-sim` system profile. This profile records one
+supported interrupt-class disable request; it does not emulate CPU interrupt
+delivery or diagnostics. The default `strict` profile rejects that system call.
+`--fuel-per-call` configures the package execution budget within the runtime's
+existing limit. It is an instruction budget, not a real-time deadline.
+
+Remaining work includes S7 memory serialization, Modbus master, Snap7 server,
+scheduling/device fault policies and comparison against the reference PLC.
+S7 status flags, general library/system functions and whole aggregate assignment
+remain unsupported. String overflow and non-finite REAL results trap deliberately.
 The internal memory layout is not the S7 DB layout. See `ABI.md` for the
 experimental interface and limitations.
 

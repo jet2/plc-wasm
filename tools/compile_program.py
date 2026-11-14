@@ -1,4 +1,4 @@
-"""Compile a reachable integer SCL function graph to an offline ABI v1 package."""
+"""Compile a supported SCL function graph to an offline ABI v1 package."""
 import argparse
 import json
 from pathlib import Path
@@ -39,10 +39,14 @@ def main():
     parser.add_argument("--name", default="scl-cycle")
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--runtime", type=Path)
+    parser.add_argument('--system-profile', choices=['strict', 'cyclic-sim'], default='strict')
+    parser.add_argument('--fuel-per-call', type=int, default=10000000,
+                        help='Wasm execution budget, 1..100000000; not a cycle time')
     args = parser.parse_args()
     try:
-        report = write_build(Compiler(load_project(args.project)), args.output, args.runtime,
-                             entry=args.entry, init=args.init, presets=args.presets, watches=args.watch, name=args.name)
+        report = write_build(Compiler(load_project(args.project), args.system_profile), args.output, args.runtime,
+                             entry=args.entry, init=args.init, presets=args.presets, watches=args.watch, name=args.name,
+                             fuel_per_call=args.fuel_per_call)
     except CompileError as error:
         parser.exit(2, str(error) + "\n")
     print(f"Compiled {len(report['functions'])} functions, {len(report['globals'])} globals, {report['state_bytes']} state bytes")

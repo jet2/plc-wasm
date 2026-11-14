@@ -1,4 +1,4 @@
-"""Integer SCL subset -> Core Wasm, using the existing experimental ABI v1.
+"""Selected SCL constructs -> Core Wasm, using experimental ABI v1.
 
 Internal layout is deliberately NOT S7 DB layout. No external calls are stubbed.
 """
@@ -7,13 +7,71 @@ from dataclasses import dataclass, field, replace
 import hashlib
 import re
 import struct
+import math
 from scl_frontend import CompileError, Node, Parser, TypeSpec, constant, walk
+from scl_support import SUPPORT_WAT
 
 RANGES = {"BOOL": (0, 1), "BYTE": (0, 255), "WORD": (0, 65535),
           "DWORD": (0, 4294967295), "INT": (-32768, 32767), "DINT": (-2147483648, 2147483647)}
 SIGNED = {"INT", "DINT"}
 BITS = {"BYTE", "WORD", "DWORD"}
 MAX_MEMORY = 16 * 1024 * 1024
+
+
+def string_bytes(text, capacity, token):
+    if '$' in text:
+        token.fail('SCL dollar escapes in STRING literals are not implemented')
+    try:
+        raw = text.encode('cp1251')
+    except UnicodeEncodeError:
+        token.fail('STRING character is not representable in Windows-1251')
+    if len(raw) > capacity:
+        token.fail('STRING literal exceeds capacity')
+    size = (capacity + 5) // 4 * 4
+    return bytes([capacity, len(raw)]) + raw + bytes(size - len(raw) - 2)
+
+
+def real_constant(node):
+    if node.op == 'typed' and node.args[0] == 'REAL':
+        return real_constant(node.args[1])
+    if node.op == 'unary' and node.args[0] in {'+', '-'}:
+        value = real_constant(node.args[1])
+        return value if node.args[0] == '+' else -value
+    if node.op == 'literal':
+        try:
+            value = float(node.args[0].replace('_', ''))
+            value = struct.unpack('<f', struct.pack('<f', value))[0]
+            if math.isfinite(value):
+                return value
+        except (ValueError, OverflowError):
+            pass
+    node.token.fail('expected finite REAL constant')
+
+
+def packed_layout(layout, token):
+    """Byte-addressable S7 big-endian layout for local AT groups only."""
+    widths = {'BYTE': 1, 'WORD': 2, 'INT': 2, 'DWORD': 4, 'DINT': 4, 'REAL': 4}
+    if layout.kind in widths:
+        size = widths[layout.kind]
+        return replace(layout, size=size, data=bytes(size))
+    if layout.kind == 'ARRAY':
+        element = packed_layout(layout.element, token)
+        size = element.size * (layout.high - layout.low + 1)
+        if size % 2:
+            token.fail('AT overlay with odd-sized arrays is not implemented')
+        return replace(layout, element=element, size=size, data=bytes(size))
+    if layout.kind == 'STRUCT':
+        fields, size = {}, 0
+        for key, (name, _, child) in layout.fields.items():
+            child = packed_layout(child, token)
+            # S7 aligns non-byte scalar fields and aggregates to word boundaries.
+            if child.kind != 'BYTE':
+                size = (size + 1) // 2 * 2
+            fields[key] = (name, size, child)
+            size += child.size
+        size = (size + 1) // 2 * 2
+        return replace(layout, fields=fields, size=size, data=bytes(size))
+    token.fail('AT overlay supports byte-addressable numeric types only')
 
 
 @dataclass
@@ -44,7 +102,6 @@ class Types:
             if name in RANGES:
                 return Layout(name, 4, bytes(4))
             if name == "REAL":
-                # Reserve storage for unused fields; REAL expressions remain rejected.
                 return Layout("REAL", 4, bytes(4))
             if name in self.cache:
                 return self.cache[name]
@@ -100,8 +157,10 @@ class Types:
             if len(expressions) != 1:
                 expressions[0].token.fail("scalar requires one initializer")
             return replace(layout, data=scalar_bytes(constant(expressions[0]), layout.kind, expressions[0].token))
-        if layout.kind == "STRING" and len(expressions) == 1 and expressions[0].op == "string" and expressions[0].args[0] == "":
-            return layout
+        if layout.kind == 'REAL' and len(expressions) == 1:
+            return replace(layout, data=struct.pack('<f', real_constant(expressions[0])))
+        if layout.kind == "STRING" and len(expressions) == 1 and expressions[0].op == "string":
+            return replace(layout, data=string_bytes(expressions[0].args[0], layout.data[0], expressions[0].token))
         if layout.kind == "ARRAY" and layout.element.kind in RANGES:
             if len(expressions) > layout.high - layout.low + 1:
                 expressions[0].token.fail("too many array initializers")
@@ -119,6 +178,7 @@ class Place:
     layout: Layout
     token: object
     valid: str | None = None
+    packed: bool = False
 
 
 def normalize(code, kind):
@@ -157,15 +217,27 @@ class Project:
 
 CONVERSIONS = {"INT_TO_DINT": ("INT", "DINT"), "DINT_TO_INT": ("DINT", "INT"),
                "DWORD_TO_DINT": ("DWORD", "DINT")}
+BUILTINS = set(CONVERSIONS) | {'LEN', 'CONCAT', 'DINT_TO_STRING', 'SHR', 'DIS_IRT'}
 
 
 class Compiler:
-    def __init__(self, project):
+    def __init__(self, project, system_profile='strict'):
+        if system_profile not in {'strict', 'cyclic-sim'}:
+            raise ValueError('unknown system profile')
+        self.system_profile = system_profile
         self.project = project
         self.functions = {}
         self.globals = {}
         self.initial_data = bytearray()
         self.needed_roots = {}
+
+    def reserve(self, data):
+        offset = (len(self.initial_data) + 3) // 4 * 4
+        if offset + len(data) > MAX_MEMORY:
+            raise CompileError('program and scratch storage exceed memory limit')
+        self.initial_data.extend(bytes(offset - len(self.initial_data)))
+        self.initial_data.extend(data)
+        return offset
 
     def dependencies(self, name, active=None, token=None):
         key = name.upper()
@@ -182,7 +254,7 @@ class Compiler:
                 self.needed_roots[node.args[0].upper()] = node.token
             if node.op == "call" and len(node.args) == 2:
                 called, args = node.args
-                if called.upper() not in CONVERSIONS:
+                if called.upper() not in BUILTINS:
                     if args:
                         node.token.fail(f"parameterized external call {called} is not implemented")
                     self.dependencies(called, active, node.token)
@@ -205,7 +277,9 @@ class Compiler:
             self.globals[name] = (len(self.initial_data), layout)
             self.initial_data.extend(layout.data)
 
-    def compile(self, entry, init=(), presets=(), watches=(), name="program"):
+    def compile(self, entry, init=(), presets=(), watches=(), name="program", fuel_per_call=10000000):
+        if type(fuel_per_call) is not int or not 1 <= fuel_per_call <= 100000000:
+            raise CompileError('fuel_per_call must be between 1 and 100000000')
         # A Compiler instance is deliberately single-use.
         if self.functions or self.globals:
             raise ValueError("create a new Compiler for each build")
@@ -231,12 +305,16 @@ class Compiler:
             self.needed_roots[node.args[0].upper()] = node.token
             parsed_watches.append((text, node))
         self.allocate()
+        self.system_offset = self.reserve(bytes(4)) if self.system_profile == 'cyclic-sim' else None
+        state_size = len(self.initial_data)
         self.ids = {name: f"$f{i}" for i, name in enumerate(self.functions)}
         generated = [FunctionEmitter(self, fn).emit() for fn in self.functions.values()]
         # Presets are explicit test state, applied AFTER source initialization calls.
         helper = FunctionEmitter(self, None)
         set_code = "\n".join(helper.statement(s) for s in parsed_sets)
         fields = []
+        if self.system_offset is not None:
+            fields.append({'name': 'runtime.async_errors_disabled', 'offset': self.system_offset, 'scl_type': 'DWORD'})
         for text, node in parsed_watches:
             place = helper.place(node, static=True)
             if place.layout.kind not in RANGES:
@@ -254,6 +332,7 @@ class Compiler:
                         (i32.gt_s (local.get $i) (local.get $hi))) (then unreachable))
             (i32.sub (local.get $i) (local.get $lo)))
           (func (export "abi_version") (result i32) (i32.const 1))
+          {SUPPORT_WAT}
           {chr(10).join(generated)}
           (func (export "init") (result i32) {helper.local_declarations()}
             {initializer} {set_code} (i32.const 0))
@@ -266,12 +345,14 @@ class Compiler:
             raw = (filename + "\0" + self.project.sources[filename]).encode("utf8")
             digest.update(len(raw).to_bytes(8, "little")); digest.update(raw)
         manifest = {"abi_version": 1, "name": name, "kind": "cycle-smoke",
-                    "memory_bytes": pages * 65536, "fuel_per_call": 10000000,
-                    "inputs": {"offset": 0, "size": 0}, "outputs": {"offset": 0, "size": size},
+                    "memory_bytes": pages * 65536, "fuel_per_call": fuel_per_call,
+                    "inputs": {"offset": 0, "size": 0}, "outputs": {"offset": 0, "size": state_size},
                     "fields": fields, "source_sha256": digest.hexdigest()}
         build = {"entry": entry, "init": list(init), "functions": sorted(self.functions),
                  "globals": {n: {"offset": o, "size": l.size} for n, (o, l) in self.globals.items()},
-                 "state_bytes": size, "presets": list(presets), "watches": list(watches),
+                 "state_bytes": state_size, "scratch_bytes": size - state_size,
+                 "system_profile": self.system_profile, "presets": list(presets), "watches": list(watches),
+                 "fuel_per_call": fuel_per_call,
                  "layout": "internal-i32-slots-not-S7", "source_sha256": digest.hexdigest()}
         return manifest, wat, build
 
@@ -280,19 +361,35 @@ class FunctionEmitter:
     def __init__(self, compiler, function):
         self.compiler, self.function = compiler, function
         self.locals, self.extra, self.loops = {}, [], []
+        self.prologue = []
         if function:
+            targets = {d.overlay.upper() for d in function.locals if d.overlay}
             for i, declaration in enumerate(function.locals):
-                if declaration.overlay:
-                    declaration.token.fail("AT overlay code generation is not implemented")
                 layout = compiler.project.types.resolve(declaration.spec)
-                if layout.kind not in RANGES:
-                    declaration.token.fail("aggregate VAR_TEMP is not implemented")
                 if declaration.initial:
                     declaration.token.fail("VAR_TEMP initializer semantics are not implemented")
                 key = declaration.name.upper()
                 if key in self.locals:
                     declaration.token.fail("duplicate local variable")
-                self.locals[key] = Place("local", f"$v{i}", layout, declaration.token, f"$valid{i}")
+                if declaration.overlay:
+                    base = self.locals.get(declaration.overlay.upper())
+                    if base is None or not base.packed:
+                        declaration.token.fail('AT overlay requires a preceding local storage target')
+                    layout = packed_layout(layout, declaration.token)
+                    if layout.size > base.layout.size:
+                        declaration.token.fail('AT overlay exceeds target storage')
+                    self.locals[key] = replace(base, layout=layout, token=declaration.token)
+                elif key in targets or layout.kind not in {*RANGES, 'REAL'}:
+                    packed = key in targets
+                    if packed:
+                        layout = packed_layout(layout, declaration.token)
+                    offset = compiler.reserve(layout.data)
+                    valid = compiler.reserve(bytes(layout.size))
+                    self.prologue.append(f'(memory.fill (i32.const {valid}) (i32.const 0) (i32.const {layout.size}))')
+                    self.locals[key] = Place('memory', f'(i32.const {offset})', layout, declaration.token,
+                                             f'(i32.const {valid})', packed)
+                else:
+                    self.locals[key] = Place("local", f"$v{i}", layout, declaration.token, f"$valid{i}")
 
     def temp(self, kind="i32"):
         name = f"$t{len(self.extra)}"
@@ -300,25 +397,32 @@ class FunctionEmitter:
         return name
 
     def local_declarations(self):
-        return " ".join([f"(local {p.value} i32) (local {p.valid} i32)" for p in self.locals.values()]
+        return " ".join([f"(local {p.value} {'f32' if p.layout.kind == 'REAL' else 'i32'}) (local {p.valid} i32)" for p in self.locals.values() if p.kind == 'local']
                         + [f"(local {n} {t})" for n, t in self.extra])
 
     def emit(self):
         body = self.statements(self.function.body)
-        return f"(func {self.compiler.ids[self.function.name.upper()]} {self.local_declarations()} {body})"
+        return f"(func {self.compiler.ids[self.function.name.upper()]} {self.local_declarations()} {' '.join(self.prologue)} {body})"
 
     def place(self, node, static=False):
         if node.op != "ref":
             node.token.fail("expected variable reference")
         root, selectors = node.args
+        valid, packed = None, False
         if root.upper() in self.locals:
-            if selectors or static:
-                node.token.fail("scalar local cannot have selectors or be watched")
-            return self.locals[root.upper()]
-        if root.upper() not in self.compiler.globals:
-            node.token.fail(f"unknown global {root}")
-        offset, layout = self.compiler.globals[root.upper()]
-        address = f"(i32.const {offset})"
+            base = self.locals[root.upper()]
+            if static:
+                node.token.fail('local cannot be watched')
+            if base.kind == 'local':
+                if selectors:
+                    node.token.fail('scalar local cannot have selectors')
+                return base
+            offset, address, layout, valid, packed = 0, base.value, base.layout, base.valid, base.packed
+        else:
+            if root.upper() not in self.compiler.globals:
+                node.token.fail(f"unknown global {root}")
+            offset, layout = self.compiler.globals[root.upper()]
+            address = f"(i32.const {offset})"
         for kind, selector in selectors:
             if kind == "field":
                 if layout.kind != "STRUCT" or selector.upper() not in layout.fields:
@@ -326,6 +430,8 @@ class FunctionEmitter:
                 _, delta, layout = layout.fields[selector.upper()]
                 offset += delta
                 address = f"(i32.add {address} (i32.const {delta}))"
+                if valid:
+                    valid = f'(i32.add {valid} (i32.const {delta}))'
             else:
                 if layout.kind != "ARRAY":
                     node.token.fail("index on non-array")
@@ -339,25 +445,51 @@ class FunctionEmitter:
                     delta = (value - layout.low) * layout.element.size
                     offset += delta
                     address = f"(i32.add {address} (i32.const {delta}))"
+                    if valid:
+                        valid = f'(i32.add {valid} (i32.const {delta}))'
                 else:
                     value, value_kind = self.expr(selector)
                     if value_kind not in SIGNED:
                         selector.token.fail("array index must be INT or DINT")
-                    address = f"(i32.add {address} (i32.mul (call $index {value} (i32.const {layout.low}) (i32.const {layout.high})) (i32.const {layout.element.size})))"
+                    delta_code = f'(i32.mul (call $index {value} (i32.const {layout.low}) (i32.const {layout.high})) (i32.const {layout.element.size}))'
+                    address = f"(i32.add {address} {delta_code})"
+                    if valid:
+                        valid = f'(i32.add {valid} {delta_code})'
                 layout = layout.element
-        return Place("memory", str(offset) if static else address, layout, node.token)
+        return Place("memory", str(offset) if static else address, layout, node.token, valid, packed)
 
     def load(self, place):
-        if place.layout.kind not in RANGES:
+        kind = place.layout.kind
+        if kind not in {*RANGES, 'REAL', 'STRING'}:
             place.token.fail("aggregate expression is not implemented")
+        wasm_type = 'f32' if kind == 'REAL' else 'i32'
         if place.kind == "local":
-            return f"(block (result i32) (if (i32.eqz (local.get {place.valid})) (then unreachable)) (local.get {place.value}))"
-        return f"(i32.load {place.value})"
+            return f"(block (result {wasm_type}) (if (i32.eqz (local.get {place.valid})) (then unreachable)) (local.get {place.value}))"
+        if kind == 'STRING':
+            code = place.value
+        elif place.packed:
+            code = f'(call $read_be {place.value} (i32.const {place.layout.size}))'
+            code = f'(f32.reinterpret_i32 {code})' if kind == 'REAL' else normalize(code, kind)
+        else:
+            code = f'({wasm_type}.load {place.value})'
+        if kind == 'REAL':
+            code = f'(call $finite {code})'
+        if place.valid:
+            code = f'(block (result {wasm_type}) (call $defined {place.valid} (i32.const {place.layout.size})) {code})'
+        return code
 
     def assignment(self, place, code, kind, node):
         target = place.layout.kind
+        if target == 'STRING':
+            if kind != 'STRING':
+                node.token.fail('STRING assignment requires STRING')
+            return self.store(place, code)
+        if target == 'REAL':
+            return self.store(place, f'(call $finite {self.to_real(code, kind, node)})')
         if target not in RANGES:
             node.token.fail("aggregate assignment is not implemented")
+        if kind not in RANGES:
+            node.token.fail('implicit conversion to integer is not implemented')
         if node.op in {"literal", "typed"} or node.op == "unary" and node.args[0] in {"+", "-"} and node.args[1].op == "literal":
             scalar_bytes(constant(node), target, node.token)
         if target == "BOOL" and kind != "BOOL":
@@ -367,12 +499,46 @@ class FunctionEmitter:
             node.token.fail("implicit BOOL to numeric assignment is not implemented")
         # Numeric integer assignments narrow to their target width.
         code = normalize(code, target)
-        if place.kind == "local":
-            return f"(local.set {place.value} {code}) (local.set {place.valid} (i32.const 1))"
-        return f"(i32.store {place.value} {code})"
+        return self.store(place, code)
+
+    def store(self, place, code):
+        kind = place.layout.kind
+        if place.kind == 'local':
+            return f'(local.set {place.value} {code}) (local.set {place.valid} (i32.const 1))'
+        # Evaluate a possibly indexed destination once, before the value expression.
+        address = self.temp()
+        prefix = f'(local.set {address} {place.value})'
+        valid_address = self.temp() if place.valid else None
+        if valid_address:
+            # A store may change a value used by its own index expression.
+            prefix += f'(local.set {valid_address} {place.valid})'
+        if kind == 'STRING':
+            write = f'(call $strcopy (local.get {address}) {code})'
+        elif place.packed:
+            if kind == 'REAL':
+                code = f'(i32.reinterpret_f32 {code})'
+            write = f'(call $write_be (local.get {address}) (i32.const {place.layout.size}) {code})'
+        else:
+            write = f'({"f32" if kind == "REAL" else "i32"}.store (local.get {address}) {code})'
+        mark = f'(memory.fill (local.get {valid_address}) (i32.const 1) (i32.const {place.layout.size}))' if valid_address else ''
+        return f'{prefix} {write} {mark}'
+
+    @staticmethod
+    def to_real(code, kind, node):
+        if kind == 'REAL':
+            return code
+        if kind in SIGNED:
+            return f'(f32.convert_i32_s {code})'
+        node.token.fail('REAL operation requires REAL or signed integer')
 
     def expr(self, node):
         op, args = node.op, node.args
+        if op == 'string':
+            offset = self.compiler.reserve(string_bytes(args[0], 254, node.token))
+            return f'(i32.const {offset})', 'STRING'
+        if (op == 'typed' and args[0] == 'REAL' or
+            op == 'literal' and '#' not in args[0] and re.search(r'[.eE]', args[0]) and args[0].upper() not in {'TRUE', 'FALSE'}):
+            return f'(f32.const {real_constant(node).hex()})', 'REAL'
         if op in {"literal", "typed"}:
             value = constant(node)
             raw = args[0].upper()
@@ -389,12 +555,14 @@ class FunctionEmitter:
         if op == "unary":
             operator, child = args
             # Signed minimum literals need to be checked after applying the sign.
-            if operator in {"+", "-"} and child.op == "literal":
+            if operator in {"+", "-"} and child.op == "literal" and re.fullmatch(r'[0-9_]+', child.args[0]):
                 value = constant(node)
                 kind = "INT" if -32768 <= value <= 32767 else "DINT"
                 scalar_bytes(value, kind, node.token)
                 return f"(i32.const {value})", kind
             value, kind = self.expr(child)
+            if kind == 'REAL' and operator in {'+', '-'}:
+                return (f'(f32.neg {value})' if operator == '-' else value), kind
             if operator == "NOT":
                 if kind == "BOOL":
                     return f"(i32.eqz {value})", kind
@@ -408,6 +576,19 @@ class FunctionEmitter:
             operator, a, b = args
             left, lk = self.expr(a); right, rk = self.expr(b)
             compare = operator in {"=", "<>", "<", ">", "<=", ">="}
+            if 'STRING' in {lk, rk}:
+                if lk != rk or not compare:
+                    node.token.fail('STRING supports comparisons with STRING only')
+                instruction = {'=': 'eq', '<>': 'ne', '<': 'lt_s', '>': 'gt_s', '<=': 'le_s', '>=': 'ge_s'}[operator]
+                return f'(i32.{instruction} (call $strcmp {left} {right}) (i32.const 0))', 'BOOL'
+            if 'REAL' in {lk, rk}:
+                left = self.to_real(left, lk, a)
+                right = self.to_real(right, rk, b)
+                instruction = {'=': 'eq', '<>': 'ne', '<': 'lt', '>': 'gt', '<=': 'le', '>=': 'ge', '+': 'add', '-': 'sub', '*': 'mul', '/': 'div'}.get(operator)
+                if instruction is None:
+                    node.token.fail('unsupported REAL operation')
+                code = f'(f32.{instruction} {left} {right})'
+                return (code, 'BOOL') if compare else (f'(call $finite {code})', 'REAL')
             if lk == "BOOL" or rk == "BOOL":
                 if compare:
                     for k, n in [(lk, a), (rk, b)]:
@@ -442,6 +623,8 @@ class FunctionEmitter:
         if op == "call":
             name, parameters = args
             name = name.upper()
+            if name in BUILTINS - set(CONVERSIONS):
+                return self.builtin(name, parameters, node)
             if name not in CONVERSIONS:
                 node.token.fail(f"value-returning function {name} is not implemented")
             if len(parameters) != 1 or parameters[0][0] is not None:
@@ -452,6 +635,51 @@ class FunctionEmitter:
                 node.token.fail(f"{name} requires {expected}, got {kind}")
             return normalize(code, target), target
         node.token.fail(f"expression {op} is not implemented")
+
+    def builtin(self, name, parameters, node):
+        labels = {'LEN': ('S',), 'DINT_TO_STRING': ('IN',), 'CONCAT': ('IN1', 'IN2'),
+                  'SHR': ('IN', 'N'), 'DIS_IRT': ('MODE', 'OB_NR')}[name]
+        if len(parameters) != len(labels):
+            node.token.fail(f'{name} requires {len(labels)} arguments')
+        if all(label is None for label, _ in parameters):
+            values = [value for _, value in parameters]
+        else:
+            supplied = {}
+            for label, value in parameters:
+                if label is None or label[1] != ':=' or label[0].upper() not in labels or label[0].upper() in supplied:
+                    node.token.fail(f'invalid or duplicate {name} argument')
+                supplied[label[0].upper()] = value
+            values = [supplied[label] for label in labels]
+        if name == 'DIS_IRT':
+            if self.compiler.system_profile != 'cyclic-sim':
+                node.token.fail('DIS_IRT requires explicit cyclic-sim system profile')
+            if tuple(constant(value) for value in values) != (1, 80):
+                node.token.fail('cyclic-sim only models DIS_IRT class disable MODE=1 OB_NR=80')
+            if self.expr(values[0])[1] not in {'BYTE', 'INT'} or self.expr(values[1])[1] != 'INT':
+                node.token.fail('DIS_IRT requires BYTE-compatible MODE and INT OB_NR constants')
+            return f'(block (result i32) (i32.store (i32.const {self.compiler.system_offset}) (i32.const 1)) (i32.const 0))', 'INT'
+        expressions = [self.expr(value) for value in values]
+        if name == 'LEN':
+            code, kind = expressions[0]
+            if kind != 'STRING':
+                node.token.fail('LEN requires STRING')
+            return f'(call $strlen {code})', 'INT'
+        if name in {'CONCAT', 'DINT_TO_STRING'}:
+            expected = 'STRING' if name == 'CONCAT' else 'DINT'
+            if any(kind != expected for _, kind in expressions):
+                node.token.fail(f'{name} requires {expected}')
+            offset = self.compiler.reserve(bytes([254]) + bytes(255))
+            helper = '$concat' if name == 'CONCAT' else '$dint_string'
+            return f'(call {helper} (i32.const {offset}) {" ".join(code for code, _ in expressions)})', 'STRING'
+        (value, kind), (count, count_kind) = expressions
+        if kind not in BITS or count_kind not in SIGNED:
+            node.token.fail('SHR requires bit-string IN and signed integer N')
+        v, n = self.temp(), self.temp()
+        width = {'BYTE': 8, 'WORD': 16, 'DWORD': 32}[kind]
+        return (f'(block (result i32) (local.set {v} {value}) (local.set {n} {count}) '
+                f'(if (i32.lt_s (local.get {n}) (i32.const 0)) (then unreachable)) '
+                f'(if (result i32) (i32.ge_u (local.get {n}) (i32.const {width})) '
+                f'(then (i32.const 0)) (else (i32.shr_u (local.get {v}) (local.get {n})))))', kind)
 
     def condition(self, node):
         code, kind = self.expr(node)
