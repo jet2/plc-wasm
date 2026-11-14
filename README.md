@@ -56,6 +56,7 @@ current publishing token lacks the GitHub workflow permission needed to install 
 - Conditional branches, case selection, loops, returns and linked VOID functions.
 - Package validation, execution fuel, memory limits and persistent cycle state.
 - Traps reject partial output publication and latch the runtime fault state.
+- S7 DB serialization, named aliases and queued writes at scan boundaries.
 
 Local tests cover generated cyclic programs, initialization, state retention,
 array bounds and runtime faults. These checks are not a proof of equivalence
@@ -68,7 +69,11 @@ delivery or diagnostics. The default `strict` profile rejects that system call.
 `--fuel-per-call` configures the package execution budget within the runtime's
 existing limit. It is an instruction budget, not a real-time deadline.
 
-Remaining work includes S7 memory serialization, Modbus master, Snap7 server,
+The offline S7 adapter generates a separate DB map, checks exported read/write
+addresses and translates snapshots and queued writes. See [S7.md](S7.md) for
+generation, limits, access policy and the `s7-run` replay command.
+
+Remaining work includes Modbus master, Snap7 server,
 scheduling/device fault policies and comparison against the reference PLC.
 S7 status flags, general library/system functions and whole aggregate assignment
 remain unsupported. String overflow and non-finite REAL results trap deliberately.

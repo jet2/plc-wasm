@@ -1,4 +1,5 @@
 //! Experimental ABI v1. No device I/O is enabled in this milestone.
+pub mod s7;
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -186,6 +187,24 @@ pub struct Runtime {
 }
 
 impl Runtime {
+    /// Only the validated S7 bridge can stage writes to persistent output state.
+    pub(crate) fn patch_state(&mut self, patches: &[(u32, Vec<u8>)]) -> Result<()> {
+        ensure!(!self.faulted, "runtime is faulted");
+        let state = self.manifest.outputs.range()?;
+        for (offset, data) in patches {
+            let end = (*offset as usize)
+                .checked_add(data.len())
+                .context("patch overflow")?;
+            ensure!(
+                *offset as usize >= state.start && end <= state.end,
+                "patch outside state"
+            );
+        }
+        for (offset, data) in patches {
+            self.memory.write(&mut self.store, *offset as usize, data)?;
+        }
+        Ok(())
+    }
     pub fn load(package: Package) -> Result<Self> {
         package.manifest.validate()?;
         let manifest = package.manifest;

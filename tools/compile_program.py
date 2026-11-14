@@ -17,7 +17,11 @@ def load_project(directory):
     return Project(sources, scalar_symbols)
 
 
-def write_build(compiler, output, runtime=None, **options):
+def write_build(compiler, output, runtime=None, s7_tables=None, **options):
+    if s7_tables is not None and runtime is None:
+        raise CompileError('S7 map generation requires --runtime to bind the map to packaged Wasm')
+    if s7_tables is not None:
+        (output / 's7-map.json').unlink(missing_ok=True)
     manifest, wat, report = compiler.compile(**options)
     output.mkdir(parents=True, exist_ok=True)
     for filename, data in [("manifest.json", manifest), ("build.json", report)]:
@@ -26,6 +30,19 @@ def write_build(compiler, output, runtime=None, **options):
     if runtime:
         subprocess.run([str(runtime.resolve()), "pack", str(output / "manifest.json"),
                         str(output / "program.wat"), str(output / "program.pkg")], check=True)
+    if s7_tables is not None:
+        from s7_layout import make_map
+        raw = (output / 'program.pkg').read_bytes()
+        packed_manifest = json.loads(raw[12:12 + int.from_bytes(raw[4:8], 'little')])
+        mapping, checked = make_map(compiler, packed_manifest, s7_tables)
+        encoded = json.dumps(mapping, separators=(',', ':')).encode('utf8')
+        if len(encoded) > 64 * 1024 * 1024:
+            raise CompileError('S7 map exceeds 64 MiB limit')
+        temporary = output / 's7-map.json.tmp'
+        temporary.write_bytes(encoded)
+        temporary.replace(output / 's7-map.json')
+        report['s7_reference_checks'] = checked
+        (output / 'build.json').write_text(json.dumps(report, indent=2), encoding='utf8')
     return report
 
 
@@ -40,11 +57,13 @@ def main():
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--runtime", type=Path)
     parser.add_argument('--system-profile', choices=['strict', 'cyclic-sim'], default='strict')
+    parser.add_argument('--s7-map', action='store_true', help='emit and verify a local DB map against exported address tables')
     parser.add_argument('--fuel-per-call', type=int, default=10000000,
                         help='Wasm execution budget, 1..100000000; not a cycle time')
     args = parser.parse_args()
     try:
         report = write_build(Compiler(load_project(args.project), args.system_profile), args.output, args.runtime,
+                             s7_tables=args.project / 'Tables' if args.s7_map else None,
                              entry=args.entry, init=args.init, presets=args.presets, watches=args.watch, name=args.name,
                              fuel_per_call=args.fuel_per_call)
     except CompileError as error:

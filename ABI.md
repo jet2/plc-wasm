@@ -110,7 +110,8 @@ operator precedence and integer division is Siemens
 ## Remaining runtime integration
 
 The compiler can emit full reachable cyclic programs for offline simulation;
-a verified external S7 memory layout is still required. Modbus remains a master/client owned by
+the offline external DB codec is described in [S7.md](S7.md), with live reference
+validation still pending. Modbus remains a master/client owned by
 Rust, and Snap7 serves S7 reads/writes independently. Network delays must not
 block the logical cycle; commands are accepted at defined cycle boundaries.
 Device addresses, stale-input handling, command acknowledgements, fault
@@ -168,3 +169,13 @@ budget. Fuel remains enforced for every call, independently of the interrupt
 profile. Offline cycle execution does not provide wall-clock scheduling or a
 real-time guarantee. Linux execution and PLCSIM equivalence remain separate
 validation steps; compiler acceptance alone proves neither.
+
+## S7 adapter (fourth milestone)
+
+The native host now supports a separate, module-bound S7 map without changing
+the Wasm ABI. Internal offsets remain unchanged. The bridge can apply validated
+writes to mapped persistent fields before scan; it does not enlarge the ABI input
+region or expose scratch memory. The map, generated per project, contains the
+external DB numbering/layout and write permissions. Publication uses owned DB
+snapshots and a generation counter. See [S7.md](S7.md) for the access and fault
+contract. No live Snap7 or WinCC connection is enabled by this milestone.

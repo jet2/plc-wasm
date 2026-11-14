@@ -22,6 +22,7 @@ PUBLIC_PATHS = frozenset({
     "src/lib.rs", "src/main.rs", "tests/runtime.rs", "tests/test_publish_guard.py",
     "tools/compile_init.py", "tools/compile_program.py", "tools/compiler_coverage.py",
     "tools/scl_audit.py", "tools/scl_codegen.py", "tools/scl_frontend.py", "tools/scl_support.py", "tools/check_publish.py",
+    "tools/s7_layout.py", "src/s7.rs", "tests/s7.rs", "S7.md",
 })
 MAX_BLOB = 2 * 1024 * 1024
 WINDOW = 16
