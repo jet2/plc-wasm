@@ -191,14 +191,11 @@ pub struct Server {
 }
 
 impl Server {
-    /// The initial integration deliberately only listens on loopback, never port 102.
+    /// The initial integration deliberately only listens on loopback.
     pub fn start(library: &Path, port: u16, bridge: Arc<Mutex<Bridge>>) -> Result<Self> {
         fn require_send_sync<T: Send + Sync>() {}
         require_send_sync::<ContextState>();
-        ensure!(
-            port >= 1024,
-            "test listener requires an unprivileged port (>=1024)"
-        );
+        ensure!(port != 0, "Snap7 listener requires a nonzero port");
         // Snap7 enables SO_REUSEADDR, which can allow duplicate listeners on Windows.
         // Fail early for an occupied endpoint. Its API has no socket handoff, so a
         // cross-process race between releasing this reservation and native bind remains.

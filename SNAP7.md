@@ -32,9 +32,11 @@ to be validated on a Linux host.
 station-runtime serve PROGRAM.pkg MAP.json SNAP7_LIBRARY [PORT] [PERIOD_MS] [CYCLES]
 ```
 
-Defaults: loopback `127.0.0.1:1102`, 100 ms, unlimited cycles (`0`). Ports below
-1024 are rejected. No LAN bind option or port-102 listener is enabled in this
-milestone. The adapter first checks that the port is available: Snap7's Windows
+Defaults: loopback `127.0.0.1:1102`, 100 ms, unlimited cycles (`0`). Explicit
+ports `1..65535` are accepted, including the standard S7 port `102`; port `0`
+is rejected. Binding remains restricted to localhost. On Linux, low ports may
+require `CAP_NET_BIND_SERVICE` or appropriate privileges, depending on host
+configuration. The adapter first checks that the port is available: Snap7's Windows
 socket reuse otherwise permits duplicate listeners. Because the native API
 cannot accept a pre-bound socket, a cross-process bind race remains possible;
 do not launch competing instances for the same endpoint.
