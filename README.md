@@ -88,3 +88,29 @@ experimental interface and limitations.
 The public command-line tools read externally supplied project directories.
 Use their `--help` output and direct all generated output to ignored `build/`.
 Do not copy projects into tracked paths to make tests or CI self-contained.
+
+## Station menu
+
+Run `python tools/station_menu.py` for the Russian-language interactive menu:
+recursive package discovery, station rebuild and visible wplc launch. The default
+search folder is `build/`; use `--root PATH` or menu item 4 to change it.
+`python tools/station_menu.py --list --root PATH` only lists packages.
+Discovery checks package framing and reads the embedded manifest; the runtime
+performs full package validation at launch.
+
+Rebuild requires the original `build.json` next to the selected package and the
+external project folder containing `Source` and `Tables`. It preserves entry,
+initialization order, presets, watches, system profile and fuel budget. Source
+paths and runtime/library preferences are saved only in ignored
+`.local-validation/station-menu.json`. New builds go into timestamped directories
+under ignored `build/recompiled/`; existing packages and running stations are
+not replaced. A failed build may leave diagnostic artifacts in its new folder.
+Hand-built packages without a compiler report cannot be rebuilt by this menu.
+
+Launch requires an adjacent `s7-map.json`, and offers Snap7 (localhost, default
+port 102) or offline monitoring. An occupied port rejects the launch; the menu
+does not stop existing processes. Each launch gets its own executable copy under
+`build/live/menu/`. Windows opens a new console; Linux uses an available terminal
+emulator, falling back to the current terminal. Stop wplc with Ctrl+C in its
+window. Runtime errors appear there; requesting a window is not proof of a
+successful server startup. Existing WinCC settings are not modified.
