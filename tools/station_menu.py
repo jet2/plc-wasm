@@ -252,30 +252,20 @@ def compile_source(source, config):
     program = Path(source['program'])
     if source_directory(program) is None or not (program / 'Tables').is_dir():
         raise ValueError('Исходная станция больше не доступна; повторите поиск.')
-    # Existing local reports supply known options without hardcoding project symbols.
+    # Station rule: the cyclic organization block owns startup initialization.
     reports = [Path(package).with_name('build.json')
                for package, origin in config.get('sources', {}).items()
                if origin == str(program) and Path(package).with_name('build.json').is_file()]
     report = read_json(reports[-1]) if reports else {}
-    entry = ask('Циклическая функция (entry)', report.get('entry', ''))
-    if not entry:
-        raise ValueError('Необходимо указать циклическую функцию.')
-    init = ask('Функции инициализации через запятую, - для пустого списка',
-               ','.join(report.get('init', [])) or '-')
-    profile = ask('Профиль: strict или cyclic-sim', report.get('system_profile', 'strict'))
-    if profile not in {'strict', 'cyclic-sim'}:
-        raise ValueError('Неизвестный профиль.')
-    fuel = integer('Бюджет Wasm на вызов', report.get('fuel_per_call', 10000000), 1, 100000000)
+    entry = 'obMain'
+    profile = 'cyclic-sim'
+    fuel = report.get('fuel_per_call', 30000000)
     runtime = runtime_path(config)
     output = build_output(program)
     command = [sys.executable, str(ROOT / 'tools/compile_program.py'), str(program),
                '--entry', entry, '--name', source['name'], '--system-profile', profile,
                '--fuel-per-call', str(fuel), '--output', str(output), '--runtime', str(runtime), '--s7-map',
                '--station', str(output.parent.parent)]
-    if init != '-':
-        for function in init.split(','):
-            if function.strip():
-                command.extend(['--init', function.strip()])
     print(f'Сборка в {output}', flush=True)
     subprocess.run(command, cwd=ROOT, check=True)
     config.setdefault('sources', {})[str(output / 'program.pkg')] = str(program)
@@ -306,7 +296,7 @@ def save_config(config):
 def runtime_path(config):
     suffix = '.exe' if os.name == 'nt' else ''
     default = ROOT / 'target' / 'release' / ('station-runtime' + suffix)
-    path = Path(ask('Исполняемый файл runtime', config.get('runtime', str(default)))).expanduser().resolve()
+    path = Path(config.get('runtime', str(default))).expanduser().resolve()
     if not path.is_file():
         raise ValueError(f'Файл не найден: {path}')
     config['runtime'] = str(path)
@@ -333,20 +323,17 @@ def build_command(package, manifest, source, output, runtime):
 
 def rebuild(package, manifest, config):
     sources = config.setdefault('sources', {})
-    source = Path(ask('Папка Program с Source и Tables', sources.get(str(package), ''))).expanduser().resolve()
+    origin = sources.get(str(package))
+    if not origin:
+        origin = next((item.get('program') for item in load_settings().get('compiled_stations', [])
+                       if item.get('package') == str(package)), None)
+    if not origin:
+        raise ValueError('Для сборки не сохранена папка Program; выполните поиск исходных станций.')
+    source = Path(origin).expanduser().resolve()
     if source_directory(source) is None or not (source / 'Tables').is_dir():
         raise ValueError('Нужна папка проекта с подпапками Source и Tables.')
-    runtime = runtime_path(config)
-    output = build_output(source)
-    command = build_command(package, manifest, source, output, runtime)
     sources[str(package)] = str(source)
-    save_config(config)
-    print(f'Сборка в {output}', flush=True)
-    subprocess.run(command, cwd=ROOT, check=True)
-    sources[str(output / 'program.pkg')] = str(source)
-    save_config(config)
-    register_build(output / 'program.pkg', source)
-    print(f'Готово: {output / "program.pkg"}')
+    compile_source({'program': str(source), 'name': manifest['name']}, config)
 
 
 def launch(package, config, mode=None):
