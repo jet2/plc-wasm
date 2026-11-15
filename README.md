@@ -99,7 +99,25 @@ next to the menu script. On first launch the menu creates it with the absolute p
 Menu item 5 saves the selected folder for subsequent launches. `--root PATH`
 overrides it for one run without changing the file. `tools/menu-settings.json` is ignored
 by Git, so machine-specific paths remain local.
-`python tools/station_menu.py --list --root PATH` only lists packages.
+
+Menu item 6 recursively finds source projects: a `Program` directory must contain
+nonempty `Source` (or `Soure`) and `Tables` directories. It saves `source_stations`
+and `compiled_stations` into `tools/menu-settings.json`, then reloads that file.
+Item 7 selects a saved source project for compilation, including projects that
+have never been built. It asks for the cyclic entry function, initialization
+functions, compiler profile and fuel budget; known local build reports supply
+defaults when available. Builds go to timestamped folders under `build/compiled/`
+and generate an S7 map. Successful builds are registered immediately.
+
+Item 1 refreshes and saves the package catalog. The search includes the selected
+folder, local `build/` and previously cataloged package folders. Items 2 and 3
+select saved packages for rebuilding and launching; missing or malformed files
+are excluded. Source projects are marked as compiled only when a known local
+source-to-package association exists. This indicates an available build, not
+that it is current with the source files. The folder discovery rule alone does
+not guarantee that a project has valid SCL or all tables required by compilation.
+`python tools/station_menu.py --list --root PATH` refreshes the saved package
+catalog and lists it without entering the menu.
 Discovery checks package framing and reads the embedded manifest; the runtime
 performs full package validation at launch.
 

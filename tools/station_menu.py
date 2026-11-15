@@ -22,14 +22,23 @@ def read_json(path):
     return json.loads(path.read_text(encoding='utf-8-sig'))
 
 
-def save_search_folder(root):
+def load_settings():
     settings = read_json(SETTINGS) if SETTINGS.exists() else {}
     if not isinstance(settings, dict):
         raise ValueError('menu-settings.json должен содержать JSON-объект.')
-    settings['stations_folder'] = str(root.resolve())
+    return settings
+
+
+def save_settings(settings):
     temporary = SETTINGS.with_suffix('.json.tmp')
     temporary.write_text(json.dumps(settings, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     temporary.replace(SETTINGS)
+
+
+def save_search_folder(root):
+    settings = load_settings()
+    settings['stations_folder'] = str(root.resolve())
+    save_settings(settings)
 
 
 def search_folder(override=None):
@@ -80,6 +89,111 @@ def show(stations):
         print('Пакеты станций не найдены.')
 
 
+def source_directory(program):
+    for name in ('Source', 'Soure'):
+        directory = program / name
+        if directory.is_dir() and any(directory.iterdir()):
+            return directory
+    return None
+
+
+def discover_sources(root):
+    result = []
+    for directory, children, _ in os.walk(root):
+        program = Path(directory)
+        if program.name.lower() != 'program':
+            continue
+        tables = program / 'Tables'
+        if source_directory(program) is not None and tables.is_dir() and any(tables.iterdir()):
+            result.append(dict(name=program.parent.name, program=str(program.resolve())))
+            children[:] = []
+    return sorted(result, key=lambda station: station['program'])
+
+
+def refresh_catalog(root, config, include_sources=False):
+    settings = load_settings()
+    # Keep valid packages found earlier in other folders, plus local build outputs.
+    folders = {root.resolve(), (ROOT / 'build').resolve()}
+    folders.update(Path(item['package']).parent for item in settings.get('compiled_stations', []))
+    packages = {}
+    for folder in sorted(folders):
+        if folder.is_dir():
+            packages.update(discover(folder))
+    associations = {item['package']: item.get('program')
+                    for item in settings.get('compiled_stations', [])}
+    associations.update(config.get('sources', {}))
+    settings['compiled_stations'] = [dict(package=str(path), name=manifest.get('name', path.stem),
+                                         program=associations.get(str(path)),
+                                         s7_map=path.with_name('s7-map.json').is_file())
+                                    for path, manifest in sorted(packages.items())]
+    if include_sources:
+        settings['source_stations'] = discover_sources(root)
+        settings['source_search_folder'] = str(root)
+    for source in settings.get('source_stations', []):
+        source['packages'] = [item['package'] for item in settings['compiled_stations']
+                              if item['program'] == source['program']]
+        source['compiled'] = bool(source['packages'])
+    save_settings(settings)
+    # Subsequent choices must use the persisted catalog, not the search snapshot.
+    return load_settings()
+
+
+def show_sources(settings):
+    stations = settings.get('source_stations', [])
+    for index, source in enumerate(stations, 1):
+        status = 'есть сборка' if source.get('compiled') else 'не скомпилирована'
+        print(f'{index}) {source["name"]} | {status}\n   {source["program"]}')
+    if not stations:
+        print('Исходные станции не найдены. Выполните поиск (пункт 6).')
+    return stations
+
+
+def saved_packages(settings):
+    result = []
+    for item in settings.get('compiled_stations', []):
+        package = Path(item['package'])
+        # Validate framing again: saved paths may have been removed or replaced.
+        match = next(((path, manifest) for path, manifest in discover(package.parent)
+                      if path == package), None) if package.is_file() else None
+        if match:
+            result.append(match)
+    return result
+
+
+def compile_source(source, config):
+    program = Path(source['program'])
+    if source_directory(program) is None or not (program / 'Tables').is_dir():
+        raise ValueError('Исходная станция больше не доступна; повторите поиск.')
+    # Existing local reports supply known options without hardcoding project symbols.
+    reports = [Path(package).with_name('build.json')
+               for package, origin in config.get('sources', {}).items()
+               if origin == str(program) and Path(package).with_name('build.json').is_file()]
+    report = read_json(reports[-1]) if reports else {}
+    entry = ask('Циклическая функция (entry)', report.get('entry', ''))
+    if not entry:
+        raise ValueError('Необходимо указать циклическую функцию.')
+    init = ask('Функции инициализации через запятую, - для пустого списка',
+               ','.join(report.get('init', [])) or '-')
+    profile = ask('Профиль: strict или cyclic-sim', report.get('system_profile', 'strict'))
+    if profile not in {'strict', 'cyclic-sim'}:
+        raise ValueError('Неизвестный профиль.')
+    fuel = integer('Бюджет Wasm на вызов', report.get('fuel_per_call', 10000000), 1, 100000000)
+    runtime = runtime_path(config)
+    output = ROOT / 'build/compiled' / program.parent.name / datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+    command = [sys.executable, str(ROOT / 'tools/compile_program.py'), str(program),
+               '--entry', entry, '--name', source['name'], '--system-profile', profile,
+               '--fuel-per-call', str(fuel), '--output', str(output), '--runtime', str(runtime), '--s7-map']
+    if init != '-':
+        for function in init.split(','):
+            if function.strip():
+                command.extend(['--init', function.strip()])
+    print(f'Сборка в {output}', flush=True)
+    subprocess.run(command, cwd=ROOT, check=True)
+    config.setdefault('sources', {})[str(output / 'program.pkg')] = str(program)
+    save_config(config)
+    print(f'Готово: {output / "program.pkg"}')
+
+
 def ask(label, default=''):
     value = input(f'{label}' + (f' [{default}]' if str(default) else '') + ': ').strip()
     return value or str(default)
@@ -128,7 +242,7 @@ def build_command(package, manifest, source, output, runtime):
 def rebuild(package, manifest, config):
     sources = config.setdefault('sources', {})
     source = Path(ask('Папка Program с Source и Tables', sources.get(str(package), ''))).expanduser().resolve()
-    if not (source / 'Source').is_dir() or not (source / 'Tables').is_dir():
+    if source_directory(source) is None or not (source / 'Tables').is_dir():
         raise ValueError('Нужна папка проекта с подпапками Source и Tables.')
     runtime = runtime_path(config)
     output = ROOT / 'build/recompiled' / package.parent.name / datetime.now().strftime('%Y%m%d-%H%M%S-%f')
@@ -323,18 +437,36 @@ def main():
         parser.error(str(error))
     if not root.is_dir():
         parser.error(f'Папка не найдена: {root}')
-    if args.list:
-        show(discover(root))
-        return
     config = read_json(CONFIG) if CONFIG.exists() else {}
+    if args.list:
+        show(saved_packages(refresh_catalog(root, config)))
+        return
     while True:
-        print(f'\nПапка поиска: {root}\n1) Найти и показать станции\n2) Рекомпилировать станцию'
-              '\n3) Запустить станцию\n4) Остановить экземпляр станции'
-              '\n5) Изменить папку поиска\n0) Выход')
+        print(f'\nПапка поиска: {root}\n1) Найти и сохранить скомпилированные станции'
+              '\n2) Рекомпилировать сохранённую сборку\n3) Выбрать скомпилированную станцию для запуска'
+              '\n4) Остановить экземпляр станции\n5) Изменить папку поиска'
+              '\n6) Найти исходные / нескомпилированные станции'
+              '\n7) Выбрать исходную станцию для компиляции\n0) Выход')
         try:
             choice = input('> ').strip()
             if choice == '0':
                 return
+            settings = load_settings()
+            config = read_json(CONFIG) if CONFIG.exists() else {}
+            if choice == '6':
+                settings = refresh_catalog(root, config, include_sources=True)
+                show_sources(settings)
+                print('Списки сохранены; настройки перечитаны.')
+                continue
+            if choice == '7':
+                sources = show_sources(settings)
+                if sources:
+                    selected = integer('Номер исходной станции (0 — отмена)', 0, 0, len(sources))
+                    if selected:
+                        compile_source(sources[selected - 1], config)
+                        settings = refresh_catalog(root, config)
+                        show_sources(settings)
+                continue
             if choice == '4':
                 stop_menu()
                 continue
@@ -348,7 +480,9 @@ def main():
             if choice not in {'1', '2', '3'}:
                 print('Выберите пункт меню.')
                 continue
-            stations = discover(root)
+            if choice == '1' or 'compiled_stations' not in settings:
+                settings = refresh_catalog(root, config)
+            stations = saved_packages(settings)
             show(stations)
             if choice == '1' or not stations:
                 continue
@@ -357,6 +491,7 @@ def main():
                 package, manifest = stations[selected - 1]
                 if choice == '2':
                     rebuild(package, manifest, config)
+                    refresh_catalog(root, config)
                 else:
                     launch(package, config)
         except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:

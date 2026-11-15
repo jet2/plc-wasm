@@ -11,7 +11,10 @@ from scl_frontend import CompileError
 
 
 def load_project(directory):
-    sources = {p.name: read_source(p) for p in sorted((directory / "Source").iterdir()) if p.suffix.lower() == ".scl"}
+    source_directory = directory / 'Source'
+    if not source_directory.is_dir() or not any(source_directory.iterdir()):
+        source_directory = directory / 'Soure'
+    sources = {p.name: read_source(p) for p in sorted(source_directory.iterdir()) if p.suffix.lower() == ".scl"}
     scalar_symbols = {s["name"].upper(): s["type"].upper() for s in symbols(directory / "Tables" / "SymbolTable.asc")
                       if re.fullmatch(r"[IQMEAB](?:[BWD])?\s*\d+(?:\.\d+)?", s["address"], re.I)}
     return Project(sources, scalar_symbols)

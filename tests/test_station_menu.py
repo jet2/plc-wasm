@@ -13,6 +13,57 @@ import station_menu as menu
 
 
 class StationMenuTests(unittest.TestCase):
+    def test_source_search_requires_nonempty_folders_and_accepts_alias(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for station, spelling in [('one', 'Source'), ('two', 'Soure'), ('empty', 'Source')]:
+                program = root / station / 'Program'
+                (program / spelling).mkdir(parents=True)
+                (program / 'Tables').mkdir()
+                (program / spelling / 'marker.txt').write_text('generic')
+                if station != 'empty':
+                    (program / 'Tables/marker.txt').write_text('generic')
+            found = menu.discover_sources(root)
+            self.assertEqual({item['name'] for item in found}, {'one', 'two'})
+            self.assertEqual(len(menu.discover_sources(root / 'one/Program')), 1)
+
+    def test_catalog_is_saved_reloaded_and_marks_only_linked_builds(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            package = root / 'build/one/program.pkg'
+            program = root / 'one/Program'
+            config = {'sources': {str(package): str(program)}}
+            sources = [dict(name='one', program=str(program)), dict(name='two', program=str(root / 'two/Program'))]
+            with patch.object(menu, 'ROOT', root), patch.object(menu, 'SETTINGS', root / 'menu-settings.json'), \
+                    patch.object(menu, 'discover', return_value=[(package, {'name': 'generic'})]), \
+                    patch.object(menu, 'discover_sources', return_value=sources):
+                menu.save_search_folder(root)
+                settings = menu.refresh_catalog(root, config, include_sources=True)
+                self.assertEqual(settings, menu.read_json(menu.SETTINGS))
+                self.assertEqual(settings['compiled_stations'][0]['package'], str(package))
+                self.assertTrue(settings['source_stations'][0]['compiled'])
+                self.assertFalse(settings['source_stations'][1]['compiled'])
+                with patch.object(menu, 'discover', return_value=[]):
+                    settings = menu.refresh_catalog(root, config)
+                self.assertFalse(settings['source_stations'][0]['compiled'])
+                self.assertEqual(settings['compiled_stations'], [])
+
+    def test_failed_source_compilation_does_not_register_package(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'Source').mkdir()
+            (root / 'Source/marker.txt').write_text('generic')
+            (root / 'Tables').mkdir()
+            config = {}
+            with patch('builtins.input', side_effect=['entry', '-', 'strict', '10000000']), \
+                    patch.object(menu, 'runtime_path', return_value=root / 'runtime'), \
+                    patch.object(menu.subprocess, 'run', side_effect=menu.subprocess.CalledProcessError(1, 'compiler')), \
+                    patch.object(menu, 'save_config') as save:
+                with self.assertRaises(menu.subprocess.CalledProcessError):
+                    menu.compile_source(dict(program=str(root), name='generic'), config)
+                save.assert_not_called()
+                self.assertNotIn('sources', config)
+
     def test_settings_persist_folder_and_override_is_temporary(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
