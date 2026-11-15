@@ -384,30 +384,48 @@ def launch(package, config, mode=None):
     executable = destination / ('wplc.exe' if os.name == 'nt' else 'wplc')
     shutil.copy2(runtime, executable)
     command[0] = str(executable)
+    visible_console = True
     if os.name == 'nt':
         startup = subprocess.STARTUPINFO()
         startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startup.wShowWindow = 1  # SW_SHOWNORMAL: do not inherit a hidden menu window.
         process = subprocess.Popen(command, cwd=ROOT,
                                    creationflags=subprocess.CREATE_NEW_CONSOLE,
-                                   startupinfo=startup)
+                                   startupinfo=startup, close_fds=True)
         time.sleep(0.5)
         exit_code = process.poll()
         if exit_code is not None:
             raise RuntimeError(f'WPLC завершился сразу после запуска (код {exit_code}). '
                                'Проверьте настройки станции и занятость портов.')
     elif shutil.which('x-terminal-emulator'):
-        process = subprocess.Popen(['x-terminal-emulator', '-e', *command], cwd=ROOT)
+        process = subprocess.Popen(['x-terminal-emulator', '-e', *command], cwd=ROOT,
+                                   start_new_session=True, stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   close_fds=True)
     elif shutil.which('gnome-terminal'):
-        process = subprocess.Popen(['gnome-terminal', '--', *command], cwd=ROOT)
+        process = subprocess.Popen(['gnome-terminal', '--', *command], cwd=ROOT,
+                                   start_new_session=True, stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   close_fds=True)
     elif shutil.which('xterm'):
-        process = subprocess.Popen(['xterm', '-e', *command], cwd=ROOT)
+        process = subprocess.Popen(['xterm', '-e', *command], cwd=ROOT,
+                                   start_new_session=True, stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   close_fds=True)
     else:
-        print('Терминал не найден; запуск в текущем окне. Ctrl+C — остановка.')
-        subprocess.run(command, cwd=ROOT, check=True)
-        return
-    print(f'Запуск запрошен, PID процесса запуска: {process.pid}. '
-          'Состояние и ошибки — в окне wplc; Ctrl+C — остановка.')
+        visible_console = False
+        log = detached_log('wplc')
+        with log.open('ab') as stream:
+            process = subprocess.Popen(command, cwd=ROOT, start_new_session=True,
+                                       stdin=subprocess.DEVNULL, stdout=stream,
+                                       stderr=subprocess.STDOUT, close_fds=True)
+        print(f'Терминал не найден; журнал WPLC: {log}')
+    if visible_console:
+        print(f'Запуск запрошен, PID процесса запуска: {process.pid}. '
+              'Состояние и ошибки — в отдельном окне wplc; Ctrl+C в этом окне — остановка.')
+    else:
+        print(f'WPLC запущен независимо от меню, PID {process.pid}; журнал: {log}. '
+              'Остановка — пункт 4 меню.')
 
 
 def managed_executable(path):
@@ -680,9 +698,27 @@ def start_emulator(command, config):
         if ua:
             port = ua['port']
     endpoint = ask('OPC UA сервера станции', f'opc.tcp://127.0.0.1:{port}/')
-    process = subprocess.Popen(command + ['--opc', endpoint, '--ns', 'urn:plc-wasm:tags'],
-                               cwd=Path(command[0]).parent)
-    print(f'WEmulator запущен, PID {process.pid}. Остановка — закрытием окна эмулятора.')
+    log = detached_log('wemulator')
+    options = {'cwd': Path(command[0]).parent, 'stdin': subprocess.DEVNULL,
+               'stderr': subprocess.STDOUT, 'close_fds': True}
+    if os.name == 'nt':
+        options['creationflags'] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        options['start_new_session'] = True
+    with log.open('ab') as stream:
+        process = subprocess.Popen(command + ['--opc', endpoint, '--ns', 'urn:plc-wasm:tags'],
+                                   stdout=stream, **options)
+    time.sleep(0.5)
+    if process.poll() is not None:
+        raise RuntimeError(f'WEmulator завершился сразу после запуска (код {process.returncode}); журнал: {log}')
+    print(f'WEmulator запущен независимо от меню, PID {process.pid}; журнал: {log}. '
+          'Остановка — закрытием окна эмулятора.')
+
+
+def detached_log(name):
+    folder = ROOT / 'build' / 'live' / 'logs'
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder / f'{name}-{datetime.now():%Y%m%d-%H%M%S-%f}.log'
 
 
 def main():

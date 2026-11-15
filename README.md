@@ -141,6 +141,13 @@ missing or malformed files from the catalog. Source projects are marked as compi
 source-to-package association exists. This indicates an available build, not
 that it is current with the source files. The folder discovery rule alone does
 not guarantee that a project has valid SCL or all tables required by compilation.
+
+The menu starts WPLC in a separate console on Windows and a separate terminal
+session on Linux. WEmulator starts as an independent GUI process with its output
+written under `build/live/logs/`. Closing the menu leaves both processes running.
+On Linux without a terminal, WPLC also runs independently and writes a log in
+that directory; menu item 4 stops it.
+
 `python tools/station_menu.py --list` shows the saved package catalog without
 searching or entering the menu.
 Discovery checks package framing and reads the embedded manifest; the runtime
