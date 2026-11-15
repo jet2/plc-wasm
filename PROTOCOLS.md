@@ -21,7 +21,7 @@ station map):
 {
   "period_ms": 100,
   "opcua": {
-    "port": 4840,
+    "port": 4841,
     "pki_dir": ".local-validation/pki",
     "tags": ["Input", "Command"]
   },
@@ -50,7 +50,7 @@ libraries and do not require a separate native protocol DLL.
 
 ## OPC UA
 
-- Endpoint: `opc.tcp://127.0.0.1:4840/` (configurable port). This initial endpoint
+- Endpoint: `opc.tcp://127.0.0.1:4841/` (configurable port). This initial endpoint
   is loopback-only, anonymous, SecurityPolicy None. Certificate/private-key files
   are generated in `pki_dir`; they do not turn this endpoint into encrypted or
   authenticated access. LAN binding and secure endpoint configuration are not

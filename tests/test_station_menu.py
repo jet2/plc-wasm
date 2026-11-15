@@ -29,7 +29,7 @@ class StationMenuTests(unittest.TestCase):
                 menu.launch(package, config)
             settings = root / '.local-validation/protocols.json'
             self.assertEqual(menu.read_json(settings)['modbus'], [])
-            self.assertEqual(menu.read_json(settings)['opcua']['port'], 4840)
+            self.assertEqual(menu.read_json(settings)['opcua']['port'], 4841)
             self.assertEqual(config['protocols'], str(settings.resolve()))
             command = start.call_args.args[0]
             # A Linux terminal emulator may prefix the command.

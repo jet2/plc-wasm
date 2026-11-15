@@ -319,7 +319,7 @@ def launch(package, config):
             settings.parent.mkdir(parents=True, exist_ok=True)
             settings.write_text(json.dumps({
                 'period_ms': 100,
-                'opcua': {'port': 4840, 'pki_dir': str(ROOT / '.local-validation/pki'), 'tags': []},
+                'opcua': {'port': 4841, 'pki_dir': str(ROOT / '.local-validation/pki'), 'tags': []},
                 'snap7': None,
                 'modbus': [],
             }, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
