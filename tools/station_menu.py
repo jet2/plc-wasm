@@ -1,10 +1,13 @@
 """Interactive local station discovery, rebuild and visible runtime launcher."""
 import argparse
+import ctypes
+from ctypes import wintypes
 from datetime import datetime
 import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import socket
 import struct
 import subprocess
@@ -156,6 +159,133 @@ def launch(package, config):
           'Состояние и ошибки — в окне wplc; Ctrl+C — остановка.')
 
 
+def managed_executable(path):
+    path = Path(path).resolve()
+    return (path.name.lower() in {'wplc.exe', 'wplc'}
+            and path.is_relative_to((ROOT / 'build/live').resolve()))
+
+
+def windows_process(pid, terminate=False):
+    """Open a stable process handle and obtain its executable and creation time."""
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD,
+                                                wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+    kernel.GetProcessTimes.argtypes = [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4
+    kernel.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    access = 0x1000 | (0x0001 | 0x00100000 if terminate else 0)
+    handle = kernel.OpenProcess(access, False, pid)
+    if not handle:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        size = wintypes.DWORD(32768)
+        buffer = ctypes.create_unicode_buffer(size.value)
+        times = [wintypes.FILETIME() for _ in range(4)]
+        if not kernel.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        if not kernel.GetProcessTimes(handle, *(ctypes.byref(t) for t in times)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        identity = (str(Path(buffer.value).resolve()),
+                    (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime)
+        return kernel, handle, identity
+    except BaseException:
+        kernel.CloseHandle(handle)
+        raise
+
+
+def linux_identity(pid):
+    directory = Path('/proc') / str(pid)
+    executable = str((directory / 'exe').resolve(strict=True))
+    # comm may contain spaces and parentheses; starttime is field 22.
+    start = (directory / 'stat').read_text().rsplit(')', 1)[1].split()[19]
+    return executable, start
+
+
+def running_stations():
+    result = []
+    if os.name == 'nt':
+        script = ('[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); '
+                  "@(Get-CimInstance Win32_Process -Filter \"Name='wplc.exe'\" | "
+                  'Select-Object ProcessId,CommandLine) | ConvertTo-Json -Compress')
+        output = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', script],
+                                capture_output=True, encoding='utf-8', check=True)
+        records = json.loads(output.stdout.strip() or '[]')
+        if isinstance(records, dict):
+            records = [records]
+        for record in records:
+            try:
+                kernel, handle, identity = windows_process(record['ProcessId'])
+                kernel.CloseHandle(handle)
+                if managed_executable(identity[0]):
+                    result.append(dict(pid=record['ProcessId'], identity=identity,
+                                       command=record.get('CommandLine') or identity[0]))
+            except OSError:
+                continue  # Process exited or is inaccessible.
+    else:
+        for directory in Path('/proc').iterdir():
+            if not directory.name.isdecimal():
+                continue
+            try:
+                identity = linux_identity(int(directory.name))
+                if managed_executable(identity[0]):
+                    command = (directory / 'cmdline').read_bytes().replace(b'\0', b' ').decode(errors='replace')
+                    result.append(dict(pid=int(directory.name), identity=identity, command=command))
+            except OSError:
+                continue
+    return sorted(result, key=lambda record: record['pid'])
+
+
+def stop_station(record):
+    """Revalidate identity and signal a stable handle, never a reused PID."""
+    if not managed_executable(record['identity'][0]):
+        raise ValueError('Процесс не является экземпляром wplc из build/live.')
+    if os.name == 'nt':
+        kernel, handle, identity = windows_process(record['pid'], terminate=True)
+        try:
+            if identity != record['identity']:
+                raise ValueError('Процесс изменился; обновите список экземпляров.')
+            # Windows has no targeted console Ctrl+C for an unrelated console.
+            # Terminate only this process, using the handle checked above.
+            if not kernel.TerminateProcess(handle, 1):
+                raise ctypes.WinError(ctypes.get_last_error())
+            if kernel.WaitForSingleObject(handle, 5000) != 0:
+                raise OSError('Завершение процесса не подтверждено за 5 секунд.')
+        finally:
+            kernel.CloseHandle(handle)
+    else:
+        if not hasattr(os, 'pidfd_open') or not hasattr(signal, 'pidfd_send_signal'):
+            raise OSError('Для безопасной остановки нужны Linux с pidfd и Python 3.9+. Используйте Ctrl+C в окне wplc.')
+        import select
+        descriptor = os.pidfd_open(record['pid'])
+        try:
+            if linux_identity(record['pid']) != record['identity']:
+                raise ValueError('Процесс изменился; обновите список экземпляров.')
+            signal.pidfd_send_signal(descriptor, signal.SIGTERM)
+            if not select.select([descriptor], [], [], 5)[0]:
+                raise OSError('Завершение процесса не подтверждено за 5 секунд.')
+        finally:
+            os.close(descriptor)
+
+
+def stop_menu():
+    stations = running_stations()
+    if not stations:
+        print('Работающих экземпляров wplc в build/live не найдено.')
+        return
+    for index, record in enumerate(stations, 1):
+        print(f'{index}) PID {record["pid"]}\n   {record["command"]}')
+    print('Остановка завершит процесс; состояние PLC в памяти будет потеряно.')
+    selected = integer('Номер экземпляра для остановки (0 — отмена)', 0, 0, len(stations))
+    if selected:
+        record = stations[selected - 1]
+        stop_station(record)
+        print(f'Экземпляр PID {record["pid"]} остановлен.')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, default=ROOT / 'build', help='recursive package search directory')
@@ -170,12 +300,16 @@ def main():
     config = read_json(CONFIG) if CONFIG.exists() else {}
     while True:
         print(f'\nПапка поиска: {root}\n1) Найти и показать станции\n2) Рекомпилировать станцию'
-              '\n3) Запустить станцию\n4) Изменить папку поиска\n0) Выход')
+              '\n3) Запустить станцию\n4) Остановить экземпляр станции'
+              '\n5) Изменить папку поиска\n0) Выход')
         try:
             choice = input('> ').strip()
             if choice == '0':
                 return
             if choice == '4':
+                stop_menu()
+                continue
+            if choice == '5':
                 candidate = Path(ask('Папка')).expanduser().resolve()
                 if not candidate.is_dir():
                     raise ValueError('Папка не найдена.')

@@ -5,12 +5,37 @@ import struct
 import sys
 import tempfile
 import unittest
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 from station_menu import build_command, discover
+import station_menu as menu
 
 
 class StationMenuTests(unittest.TestCase):
+    def test_stop_refuses_unmanaged_executable(self):
+        with patch.object(menu, 'windows_process') as opener:
+            with self.assertRaises(ValueError):
+                menu.stop_station(dict(pid=123, identity=(str(menu.ROOT / 'other/wplc.exe'), 1)))
+            opener.assert_not_called()
+
+    @unittest.skipUnless(sys.platform == 'win32', 'Windows handle identity check')
+    def test_stop_refuses_reused_pid_and_closes_handle(self):
+        executable = str(menu.ROOT / 'build/live/test/wplc.exe')
+        kernel = MagicMock()
+        record = dict(pid=123, identity=(executable, 1))
+        with patch.object(menu, 'windows_process', return_value=(kernel, 456, (executable, 2))):
+            with self.assertRaises(ValueError):
+                menu.stop_station(record)
+        kernel.TerminateProcess.assert_not_called()
+        kernel.CloseHandle.assert_called_once_with(456)
+
+    def test_stop_menu_cancel_does_not_signal(self):
+        with patch.object(menu, 'running_stations', return_value=[dict(pid=123, command='generic')]), \
+                patch('builtins.input', return_value='0'), patch.object(menu, 'stop_station') as stop:
+            menu.stop_menu()
+            stop.assert_not_called()
+
     def test_discovery_nested_and_malformed_packages(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

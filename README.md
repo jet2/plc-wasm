@@ -93,7 +93,7 @@ Do not copy projects into tracked paths to make tests or CI self-contained.
 
 Run `python tools/station_menu.py` for the Russian-language interactive menu:
 recursive package discovery, station rebuild and visible wplc launch. The default
-search folder is `build/`; use `--root PATH` or menu item 4 to change it.
+search folder is `build/`; use `--root PATH` or menu item 5 to change it.
 `python tools/station_menu.py --list --root PATH` only lists packages.
 Discovery checks package framing and reads the embedded manifest; the runtime
 performs full package validation at launch.
@@ -114,3 +114,13 @@ does not stop existing processes. Each launch gets its own executable copy under
 emulator, falling back to the current terminal. Stop wplc with Ctrl+C in its
 window. Runtime errors appear there; requesting a window is not proof of a
 successful server startup. Existing WinCC settings are not modified.
+
+Menu item 4 lists running `wplc` instances whose executables are under this
+repository's `build/live/`, including instances launched before opening the menu.
+Select an instance by its PID and command line, or enter 0 to cancel. Other
+applications and copies outside that directory are excluded. The menu checks
+executable path and process creation identity again before stopping, using a
+stable process handle to avoid terminating a reused PID. Windows uses targeted
+process termination; Linux uses SIGTERM via pidfd (Python 3.9+ and a kernel with
+pidfd support). This stops execution and releases network sockets; it does not
+save PLC memory or execute a PLC shutdown scan. No other instance is stopped.
