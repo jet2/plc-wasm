@@ -300,12 +300,12 @@ def rebuild(package, manifest, config):
     print(f'Готово: {output / "program.pkg"}')
 
 
-def launch(package, config):
+def launch(package, config, mode=None):
     runtime = runtime_path(config)
     mapping = package.with_name('s7-map.json')
     if not mapping.is_file():
         raise ValueError('Для запуска с циклом и S7 нужна карта s7-map.json. Пересоберите пакет с --s7-map.')
-    mode = ask('Режим: 1 — Snap7, 2 — офлайн монитор, 3 — OPC UA / Modbus / Snap7', '1')
+    mode = mode or ask('Режим: 1 — Snap7, 2 — офлайн монитор, 3 — OPC UA / Modbus / Snap7', '1')
     period = integer('Период цикла, мс', 100, 1, 60000) if mode != '3' else 100
     command = [str(runtime), 'monitor', str(package), str(mapping), str(period), '0']
     if mode == '1':
@@ -596,6 +596,43 @@ def delete_menu():
     delete_builds(packages)
 
 
+def emulator_command(config, package=None):
+    from station_protocols import station_files
+    default_folder = ''
+    if package:
+        source = config.get('sources', {}).get(str(package))
+        for parent in (Path(source).parents if source else package.parents):
+            if any(p.is_file() and p.suffix.lower() == '.mpr' for p in parent.iterdir()):
+                default_folder = str(parent)
+                break
+    folder = Path(ask('Папка станции с MPR и USO', default_folder or config.get('emulator_station', ''))).expanduser().resolve()
+    station_files(folder)
+    suffix = '.exe' if os.name == 'nt' else ''
+    candidates = [ROOT.parent / 'WEmulator' / 'target' / profile / ('wemulator' + suffix)
+                  for profile in ('release', 'debug')]
+    default = next((p for p in candidates if p.is_file()), candidates[0])
+    executable = Path(ask('Исполняемый файл WEmulator', config.get('emulator', str(default)))).expanduser().resolve()
+    if not executable.is_file():
+        raise ValueError(f'Файл не найден: {executable}')
+    config['emulator'] = str(executable)
+    config['emulator_station'] = str(folder)
+    save_config(config)
+    return [str(executable), str(folder)]
+
+
+def start_emulator(command, config):
+    settings = Path(config.get('protocols', ''))
+    port = 4841
+    if settings.is_file():
+        ua = read_json(settings).get('opcua')
+        if ua:
+            port = ua['port']
+    endpoint = ask('OPC UA сервера станции', f'opc.tcp://127.0.0.1:{port}/')
+    process = subprocess.Popen(command + ['--opc', endpoint, '--ns', 'urn:plc-wasm:tags'],
+                               cwd=Path(command[0]).parent)
+    print(f'WEmulator запущен, PID {process.pid}. Остановка — закрытием окна эмулятора.')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, help='override stations_folder from menu-settings.json for this run')
@@ -621,13 +658,17 @@ def main():
                   '\n6) Найти исходные / нескомпилированные станции'
                   '\n7) Выбрать станцию для компиляции'
                   '\n\nУправление\n4) Остановить экземпляр станции\n5) Изменить папку поиска'
-                  '\n8) Удалить сборки пачкой\n0) Выход')
+                  '\n8) Удалить сборки пачкой\n9) Запустить эмулятор станции'
+                  '\n10) Запустить станцию + эмулятор\n0) Выход')
             choice = input('> ').strip()
             if choice == '0':
                 return
             settings = load_settings()
             config = read_json(CONFIG) if CONFIG.exists() else {}
             root = search_folder(args.root)
+            if choice == '9':
+                start_emulator(emulator_command(config), config)
+                continue
             if choice == '6':
                 settings = refresh_catalog(root, config, include_sources=True)
                 show_sources(settings)
@@ -657,7 +698,7 @@ def main():
                 args.root = None
                 root = candidate
                 continue
-            if choice not in {'1', '2', '3'}:
+            if choice not in {'1', '2', '3', '10'}:
                 print('Выберите пункт меню.')
                 continue
             if choice == '1':
@@ -673,6 +714,10 @@ def main():
                 manifest = package_manifest(package)
                 if choice == '2':
                     rebuild(package, manifest, config)
+                elif choice == '10':
+                    command = emulator_command(config, package)
+                    launch(package, config, mode='3')
+                    start_emulator(command, config)
                 else:
                     launch(package, config)
         except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
