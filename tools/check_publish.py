@@ -22,7 +22,7 @@ PUBLIC_PATHS = frozenset({
     "tools/rust_cache_wrapper.rs",
     ".gitignore", ".gitattributes", ".githooks/pre-push", "AGENTS.md", "README.md", "ABI.md",
     "Cargo.toml", "Cargo.lock", "cargo-local.ps1", "ci/github-actions.yml",
-    "src/lib.rs", "src/main.rs", "tests/runtime.rs", "tests/test_publish_guard.py",
+    "src/lib.rs", "src/main.rs", "src/dashboard.rs", "tests/runtime.rs", "tests/test_publish_guard.py",
     "tools/compile_init.py", "tools/compile_program.py", "tools/compiler_coverage.py",
     "tools/scl_audit.py", "tools/scl_codegen.py", "tools/scl_frontend.py", "tools/scl_support.py", "tools/check_publish.py",
     "tools/s7_layout.py", "src/s7.rs", "tests/s7.rs", "S7.md",

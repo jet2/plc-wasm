@@ -1,5 +1,6 @@
 use anyhow::{Result, bail, ensure};
 use serde::Deserialize;
+use station_runtime::dashboard::{Dashboard, bytes, resident_bytes};
 use station_runtime::s7::{Bridge, Map};
 use station_runtime::snap7::Server;
 use station_runtime::{Manifest, Package, Runtime};
@@ -18,6 +19,54 @@ fn bounded_read_limit(path: impl AsRef<Path>, limit: usize) -> Result<Vec<u8>> {
         .read_to_end(&mut bytes)?;
     ensure!(bytes.len() <= limit, "file exceeds size limit");
     Ok(bytes)
+}
+
+fn scan_rows(
+    station: &str,
+    started: &Instant,
+    period_ms: u32,
+    generation: u64,
+    mean_ms: f64,
+    max_ms: f64,
+    misses: u64,
+    wasm_bytes: u32,
+    state_bytes: u32,
+) -> Vec<(String, String)> {
+    let mut rows = vec![
+        ("Station".into(), station.into()),
+        (
+            "PID / uptime".into(),
+            format!(
+                "{} / {:.0} s",
+                std::process::id(),
+                started.elapsed().as_secs_f64()
+            ),
+        ),
+        (
+            "Scan".into(),
+            format!("RUN  #{generation}  period {period_ms} ms"),
+        ),
+        (
+            "Cycle mean / max".into(),
+            format!("{mean_ms:.2} / {max_ms:.2} ms"),
+        ),
+        (
+            "Scan load / misses".into(),
+            format!("{:.1}% / {misses}", mean_ms * 100.0 / period_ms as f64),
+        ),
+        (
+            "Wasm / PLC state".into(),
+            format!(
+                "{} / {}",
+                bytes(wasm_bytes as u64),
+                bytes(state_bytes as u64)
+            ),
+        ),
+    ];
+    if let Some(rss) = resident_bytes() {
+        rows.push(("Process RSS".into(), bytes(rss)));
+    }
+    rows
 }
 
 #[derive(Deserialize)]
@@ -56,6 +105,9 @@ fn main() -> Result<()> {
     match args.get(1).map(String::as_str) {
         Some("gateway") if (5..=6).contains(&args.len()) => {
             let runtime = Runtime::load(Package::decode(&bounded_read(&args[2])?)?)?;
+            let station = runtime.manifest.name.clone();
+            let wasm_bytes = runtime.manifest.memory_bytes;
+            let state_bytes = runtime.manifest.outputs.size;
             let inputs = vec![0; runtime.manifest.inputs.size as usize];
             let map: Map =
                 serde_json::from_slice(&bounded_read_limit(&args[3], 64 * 1024 * 1024)?)?;
@@ -71,6 +123,9 @@ fn main() -> Result<()> {
                     inputs,
                     config,
                     cycles,
+                    station,
+                    wasm_bytes,
+                    state_bytes,
                 ))?;
         }
         Some("serve") if (5..=8).contains(&args.len()) => {
@@ -82,6 +137,9 @@ fn main() -> Result<()> {
                 "period must be 1..60000 ms"
             );
             let runtime = Runtime::load(Package::decode(&bounded_read(&args[2])?)?)?;
+            let station = runtime.manifest.name.clone();
+            let wasm_bytes = runtime.manifest.memory_bytes;
+            let state_bytes = runtime.manifest.outputs.size;
             let inputs = vec![0; runtime.manifest.inputs.size as usize];
             let map: Map =
                 serde_json::from_slice(&bounded_read_limit(&args[3], 64 * 1024 * 1024)?)?;
@@ -90,10 +148,40 @@ fn main() -> Result<()> {
             bridge.cycle(&inputs, period_ms)?;
             let bridge = Arc::new(Mutex::new(bridge));
             let server = Server::start(Path::new(&args[4]), port, bridge.clone())?;
-            println!(
-                "{}",
-                serde_json::json!({"event":"listening", "pid":std::process::id(),
-                "address":"127.0.0.1", "port":port, "period_ms":period_ms, "generation":1})
+            let dashboard = Dashboard::new();
+            let started = Instant::now();
+            let s7_rows = |status: station_runtime::snap7::Status| {
+                vec![
+                    ("Listener".into(), format!("127.0.0.1:{port}")),
+                    (
+                        "Clients / reads".into(),
+                        format!("{} / {}", status.clients, status.reads),
+                    ),
+                    (
+                        "Writes / rejected".into(),
+                        format!("{} / {}", status.writes, status.rejected),
+                    ),
+                ]
+            };
+            let _ = dashboard.draw(
+                "S7 server",
+                &[
+                    (
+                        "PLC",
+                        scan_rows(
+                            &station,
+                            &started,
+                            period_ms,
+                            1,
+                            0.0,
+                            0.0,
+                            0,
+                            wasm_bytes,
+                            state_bytes,
+                        ),
+                    ),
+                    ("S7", s7_rows(server.status()?)),
+                ],
             );
             let period = Duration::from_millis(period_ms as u64);
             let mut deadline = Instant::now() + period;
@@ -128,14 +216,28 @@ fn main() -> Result<()> {
                     overruns += 1;
                     deadline = Instant::now();
                 }
-                if reported.elapsed() >= Duration::from_secs(10)
+                if reported.elapsed() >= dashboard.refresh_interval()
                     || limit != 0 && generation >= limit
                 {
-                    println!(
-                        "{}",
-                        serde_json::json!({"event":"network_cycles", "generation":generation,
-                        "mean_cycle_ms":total_ms/count as f64, "max_cycle_ms":maximum_ms,
-                        "missed_deadlines":overruns, "snap7":server.status()?})
+                    let _ = dashboard.draw(
+                        "S7 server",
+                        &[
+                            (
+                                "PLC",
+                                scan_rows(
+                                    &station,
+                                    &started,
+                                    period_ms,
+                                    generation,
+                                    total_ms / count as f64,
+                                    maximum_ms,
+                                    overruns,
+                                    wasm_bytes,
+                                    state_bytes,
+                                ),
+                            ),
+                            ("S7", s7_rows(server.status()?)),
+                        ],
                     );
                     reported = Instant::now();
                     count = 0;
@@ -156,18 +258,46 @@ fn main() -> Result<()> {
             );
             let started = Instant::now();
             let runtime = Runtime::load(Package::decode(&bounded_read(&args[2])?)?)?;
+            let station = runtime.manifest.name.clone();
             let inputs = vec![0; runtime.manifest.inputs.size as usize];
             let memory_bytes = runtime.manifest.memory_bytes;
             let state_bytes = runtime.manifest.outputs.size;
             let map: Map =
                 serde_json::from_slice(&bounded_read_limit(&args[3], 64 * 1024 * 1024)?)?;
             let mut bridge = Bridge::new(runtime, map)?;
-            println!(
-                "{}",
-                serde_json::json!({"event":"ready", "pid":std::process::id(),
-                "mode":"offline-monitor", "period_ms":period_ms, "load_ms":started.elapsed().as_secs_f64()*1000.0,
-                "wasm_memory_bytes":memory_bytes, "state_bytes":state_bytes, "blocks":bridge.map().blocks.len(),
-                "fields":bridge.map().blocks.iter().map(|b| b.fields.len()).sum::<usize>()})
+            let dashboard = Dashboard::new();
+            let info_rows = vec![
+                ("DB blocks".into(), bridge.map().blocks.len().to_string()),
+                (
+                    "Fields".into(),
+                    bridge
+                        .map()
+                        .blocks
+                        .iter()
+                        .map(|b| b.fields.len())
+                        .sum::<usize>()
+                        .to_string(),
+                ),
+            ];
+            let _ = dashboard.draw(
+                "offline monitor",
+                &[
+                    (
+                        "PLC",
+                        scan_rows(
+                            &station,
+                            &started,
+                            period_ms,
+                            0,
+                            0.0,
+                            0.0,
+                            0,
+                            memory_bytes,
+                            state_bytes,
+                        ),
+                    ),
+                    ("Map", info_rows.clone()),
+                ],
             );
             let period = Duration::from_millis(period_ms as u64);
             let mut deadline = Instant::now();
@@ -190,16 +320,28 @@ fn main() -> Result<()> {
                     // Skip missed deadlines rather than execute a burst of catch-up scans.
                     deadline = Instant::now();
                 }
-                if bridge.generation() == 1
-                    || reported.elapsed() >= Duration::from_secs(10)
+                if reported.elapsed() >= dashboard.refresh_interval()
                     || limit != 0 && bridge.generation() >= limit
                 {
-                    println!(
-                        "{}",
-                        serde_json::json!({"event":"cycles", "generation":bridge.generation(),
-                        "uptime_s":started.elapsed().as_secs_f64(), "samples":count,
-                        "mean_cycle_ms":total_ms/count as f64, "max_cycle_ms":maximum_ms,
-                        "missed_deadlines":overruns})
+                    let _ = dashboard.draw(
+                        "offline monitor",
+                        &[
+                            (
+                                "PLC",
+                                scan_rows(
+                                    &station,
+                                    &started,
+                                    period_ms,
+                                    bridge.generation(),
+                                    total_ms / count as f64,
+                                    maximum_ms,
+                                    overruns,
+                                    memory_bytes,
+                                    state_bytes,
+                                ),
+                            ),
+                            ("Map", info_rows.clone()),
+                        ],
                     );
                     count = 0;
                     total_ms = 0.0;

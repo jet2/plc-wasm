@@ -1,4 +1,5 @@
 //! Experimental ABI v1 with host-owned protocol adapters.
+pub mod dashboard;
 pub mod gateway;
 pub mod modbus;
 pub mod s7;

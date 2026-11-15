@@ -172,9 +172,12 @@ Launch requires an adjacent `s7-map.json`, and offers Snap7 (localhost, default
 port 102) or offline monitoring. An occupied port rejects the launch; the menu
 does not stop existing processes. Each launch gets its own executable copy under
 `build/live/menu/`. Windows opens a new console; Linux uses an available terminal
-emulator, falling back to the current terminal. Stop wplc with Ctrl+C in its
-window. Runtime errors appear there; requesting a window is not proof of a
-successful server startup. Existing WinCC settings are not modified.
+emulator, falling back to an independent process with a log under `build/live/logs/`.
+The console shows one status table that refreshes every second: scan timing,
+memory, S7 clients and reads/writes, OPC UA, and each Modbus device. Redirected
+output receives a plain table every ten seconds. Stop wplc with Ctrl+C in its
+window or item 4 in the menu. Runtime errors appear there; requesting a window
+is not proof of a successful server startup. Existing WinCC settings are not modified.
 
 Menu item 4 lists running `wplc` instances whose executables are under this
 repository's `build/live/`, including instances launched before opening the menu.
