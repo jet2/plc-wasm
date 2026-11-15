@@ -5,10 +5,14 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
-from station_protocols import devices_from_uso, parse_uso, station_files
+from station_protocols import default_snap7, devices_from_uso, parse_uso, station_files
 
 
 class StationProtocolsTests(unittest.TestCase):
+    def test_snap7_is_enabled_on_loopback_port_102(self):
+        self.assertEqual(default_snap7()['port'], 102)
+        self.assertTrue(default_snap7()['library'])
+
     def setUp(self):
         self.ini = parse_uso('[Slaves]\n2=test\n[2]\n9=0,0,32,0\n1=0,1,2,0\n3=1,0,0,16\n'
                              '[2.9]\n0=Sensor\n17=Neighbor\n[2.1]\n1=Analog\n[2.3]\n4=Command\n')

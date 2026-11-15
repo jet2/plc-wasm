@@ -3,10 +3,25 @@ import argparse
 import configparser
 import ipaddress
 import json
+import os
 from pathlib import Path
 import re
 
 from scl_audit import read_source, symbols
+
+
+def snap7_library():
+    override = os.environ.get('WPLC_SNAP7_LIBRARY')
+    if override:
+        return override
+    if os.name == 'nt':
+        return str(Path(__file__).resolve().parents[1] /
+                   '.local-validation/vendor/snap7/build/bin/win64/snap7.dll')
+    return 'libsnap7.so'
+
+
+def default_snap7():
+    return {'library': snap7_library(), 'port': 102}
 
 
 def station_files(folder):
@@ -134,7 +149,7 @@ def generate(folder, tables, mapping, output):
     devices = devices_from_uso(parse_uso(read_source(uso)), symbols(tables / 'SymbolTable.asc'), mapping)
     pki = Path(__file__).resolve().parents[1] / '.local-validation' / 'pki'
     return dict(period_ms=100, opcua=dict(port=4841, pki_dir=str(pki), tags=[]),
-                snap7=None, modbus=devices)
+                snap7=default_snap7(), modbus=devices)
 
 
 def main():

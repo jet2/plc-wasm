@@ -46,6 +46,7 @@ class StationMenuTests(unittest.TestCase):
             settings = root / '.local-validation/protocols.json'
             self.assertEqual(menu.read_json(settings)['modbus'], [])
             self.assertEqual(menu.read_json(settings)['opcua']['port'], 4841)
+            self.assertEqual(menu.read_json(settings)['snap7']['port'], 102)
             self.assertEqual(config['protocols'], str(settings.resolve()))
             command = start.call_args.args[0]
             if menu.os.name == 'nt':

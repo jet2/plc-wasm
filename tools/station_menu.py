@@ -373,10 +373,11 @@ def launch(package, config, mode=None):
         settings = Path(ask('JSON настроек протоколов', str(default))).expanduser().resolve()
         if not settings.exists():
             settings.parent.mkdir(parents=True, exist_ok=True)
+            from station_protocols import default_snap7
             settings.write_text(json.dumps({
                 'period_ms': 100,
                 'opcua': {'port': 4841, 'pki_dir': str(ROOT / '.local-validation/pki'), 'tags': []},
-                'snap7': None,
+                'snap7': default_snap7(),
                 'modbus': [],
             }, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
             print(f'Созданы настройки OPC UA: {settings}. Modbus-устройства и Snap7 добавляются в этот JSON.')
