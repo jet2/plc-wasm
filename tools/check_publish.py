@@ -17,6 +17,9 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC_PATHS = frozenset({
+    "tools/install_build_cache.ps1",
+    "tools/build_wemulator.ps1",
+    "tools/rust_cache_wrapper.rs",
     ".gitignore", ".gitattributes", ".githooks/pre-push", "AGENTS.md", "README.md", "ABI.md",
     "Cargo.toml", "Cargo.lock", "cargo-local.ps1", "ci/github-actions.yml",
     "src/lib.rs", "src/main.rs", "tests/runtime.rs", "tests/test_publish_guard.py",
