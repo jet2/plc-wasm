@@ -101,8 +101,8 @@ overrides it for one run without changing the file. `tools/menu-settings.json` i
 by Git, so machine-specific paths remain local.
 
 Menu item 6 recursively finds source projects: a `Program` directory must contain
-nonempty `Source` (or `Soure`) and `Tables` directories. It saves `source_stations`
-and `compiled_stations` into `tools/menu-settings.json`, then reloads that file.
+nonempty `Source` (or `Soure`) and `Tables` directories. It replaces `source_stations`
+in `tools/menu-settings.json`, then reloads that file.
 Item 7 selects a saved source project for compilation, including projects that
 have never been built. It asks for the cyclic entry function, initialization
 functions, compiler profile and fuel budget; known local build reports supply
@@ -118,9 +118,14 @@ prompts the user to run an explicit search.
 
 Item 1 refreshes and saves the package catalog. Recursive search checks files
 directly in `stations_folder` and all its subfolders. The menu rereads this path
-before searching, so edits to settings take effect without restarting. Existing
-registered builds outside that tree are retained by checking their exact files;
-their containing folders and local `build/` are not automatically searched.
+before searching, so edits to settings take effect without restarting.
+Each successful search replaces its corresponding list completely, including
+clearing it when nothing is found. Item 1 replaces only `compiled_stations`;
+item 6 replaces only `source_stations`. Previous entries outside the search tree
+are not carried over. Directory traversal or file-read errors abort the search
+and leave the settings file unchanged. Invalid package formats are skipped.
+The completed result is saved atomically. Successful compilation separately
+registers its new package without searching or clearing other entries.
 Items 2 and 3
 select saved packages for rebuilding and launching. An explicit search removes
 missing or malformed files from the catalog. Source projects are marked as compiled only when a known local

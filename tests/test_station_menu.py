@@ -14,6 +14,53 @@ import station_menu as menu
 
 
 class StationMenuTests(unittest.TestCase):
+    def test_register_build_adds_output_without_search_or_clearing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with patch.object(menu, 'SETTINGS', root / 'menu-settings.json'), \
+                    patch.object(menu, 'package_manifest', return_value={'name': 'new'}), \
+                    patch.object(menu, 'discover', side_effect=AssertionError('Unexpected search')):
+                old = dict(package=str(root / 'old.pkg'), program=None)
+                menu.save_settings(dict(compiled_stations=[old]))
+                menu.register_build(root / 'new.pkg', root / 'Program')
+                records = menu.load_settings()['compiled_stations']
+                self.assertEqual(records[0], old)
+                self.assertEqual(records[1]['package'], str(root / 'new.pkg'))
+
+    def test_search_replaces_only_its_list_and_errors_preserve_settings(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            previous = dict(compiled_stations=[dict(package=str(root.parent / 'outside.pkg'), program=None)],
+                            source_stations=[dict(name='old', program=str(root / 'old/Program'))])
+            with patch.object(menu, 'SETTINGS', root / 'menu-settings.json'):
+                for sources in (False, True):
+                    menu.save_settings(previous)
+                    before = menu.SETTINGS.read_bytes()
+                    name = 'discover_sources' if sources else 'discover'
+                    with patch.object(menu, name, side_effect=PermissionError('denied')):
+                        with self.assertRaises(PermissionError):
+                            menu.refresh_catalog(root, {}, include_sources=sources)
+                    self.assertEqual(menu.SETTINGS.read_bytes(), before)
+                    with patch.object(menu, name, return_value=[]):
+                        current = menu.refresh_catalog(root, {}, include_sources=sources)
+                    key = 'source_stations' if sources else 'compiled_stations'
+                    other = 'compiled_stations' if sources else 'source_stations'
+                    self.assertEqual(current[key], [])
+                    self.assertEqual(len(current[other]), 1)
+
+    def test_walk_and_package_io_errors_are_not_suppressed(self):
+        def failing_walk(root, onerror):
+            onerror(PermissionError('denied'))
+            return []
+        with patch.object(menu.os, 'walk', side_effect=failing_walk):
+            for search in (menu.discover, menu.discover_sources):
+                with self.assertRaises(PermissionError):
+                    search(Path('generic'))
+        with patch.object(menu.os, 'walk', return_value=[('generic', [], ['test.pkg'])]), \
+                patch.object(menu, 'package_manifest', side_effect=PermissionError('denied')):
+            with self.assertRaises(PermissionError):
+                menu.discover(Path('generic'))
+
     def test_search_uses_only_configured_tree_and_rereads_settings(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
@@ -77,6 +124,7 @@ class StationMenuTests(unittest.TestCase):
                     patch.object(menu, 'discover', return_value=[(package, {'name': 'generic'})]), \
                     patch.object(menu, 'discover_sources', return_value=sources):
                 menu.save_search_folder(root)
+                menu.refresh_catalog(root, config)
                 settings = menu.refresh_catalog(root, config, include_sources=True)
                 self.assertEqual(settings, menu.read_json(menu.SETTINGS))
                 self.assertEqual(settings['compiled_stations'][0]['package'], str(package))

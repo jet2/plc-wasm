@@ -10,6 +10,7 @@ import shutil
 import signal
 import socket
 import struct
+import stat
 import subprocess
 import sys
 
@@ -70,16 +71,22 @@ def package_manifest(path):
         return manifest
 
 
+def search_error(error):
+    raise error
+
+
 def discover(root):
     result = []
-    for path in sorted(root.rglob('*')):
-        if not path.is_file() or path.suffix.lower() != '.pkg':
-            continue
-        try:
-            result.append((path.resolve(), package_manifest(path)))
-        except (OSError, ValueError):
-            continue
-    return result
+    for directory, _, files in os.walk(root, onerror=search_error):
+        for filename in files:
+            path = Path(directory) / filename
+            if path.suffix.lower() != '.pkg':
+                continue
+            try:
+                result.append((path.resolve(), package_manifest(path)))
+            except ValueError:
+                continue  # Not a valid package; filesystem errors abort the search.
+    return sorted(result)
 
 
 def show(stations):
@@ -95,62 +102,74 @@ def show(stations):
         print('В настройках нет скомпилированных станций. Выполните поиск (пункт 1).')
 
 
+def nonempty_directory(directory):
+    try:
+        metadata = directory.stat()
+    except FileNotFoundError:
+        return False
+    return stat.S_ISDIR(metadata.st_mode) and any(directory.iterdir())
+
+
 def source_directory(program):
     for name in ('Source', 'Soure'):
         directory = program / name
-        if directory.is_dir() and any(directory.iterdir()):
+        if nonempty_directory(directory):
             return directory
     return None
 
 
 def discover_sources(root):
     result = []
-    for directory, children, _ in os.walk(root):
+    for directory, children, _ in os.walk(root, onerror=search_error):
         program = Path(directory)
         if program.name.lower() != 'program':
             continue
         tables = program / 'Tables'
-        if source_directory(program) is not None and tables.is_dir() and any(tables.iterdir()):
+        if source_directory(program) is not None and nonempty_directory(tables):
             result.append(dict(name=program.parent.name, program=str(program.resolve())))
             children[:] = []
     return sorted(result, key=lambda station: station['program'])
 
 
+def update_source_links(settings):
+    for source in settings.get('source_stations', []):
+        source['packages'] = [item['package'] for item in settings.get('compiled_stations', [])
+                              if item.get('program') == source['program']]
+        source['compiled'] = bool(source['packages'])
+
+
+def package_record(path, manifest, program):
+    return dict(package=str(path), name=manifest.get('name', path.stem), program=program,
+                s7_map=path.with_name('s7-map.json').is_file())
+
+
 def refresh_catalog(root, config, include_sources=False):
     if not root.is_dir():
-        raise ValueError(f'Папка поиска не найдена: {root}')
+        raise ValueError(f'????? ?????? ?? ???????: {root}')
     settings = load_settings()
-    # Recursively search only the configured folder, including its own files.
-    packages = dict(discover(root))
-    # Preserve explicitly registered builds outside the search tree by checking
-    # their exact files, without recursively scanning unrelated directories.
-    known = {item['package'] for item in settings.get('compiled_stations', [])}
-    known.update(config.get('sources', {}))
-    for filename in sorted(known):
-        package = Path(filename).resolve()
-        if package.is_relative_to(root.resolve()):
-            continue
-        try:
-            packages[package] = package_manifest(package)
-        except (OSError, ValueError):
-            continue
-    associations = {item['package']: item.get('program')
-                    for item in settings.get('compiled_stations', [])}
-    associations.update(config.get('sources', {}))
-    settings['compiled_stations'] = [dict(package=str(path), name=manifest.get('name', path.stem),
-                                         program=associations.get(str(path)),
-                                         s7_map=path.with_name('s7-map.json').is_file())
-                                    for path, manifest in sorted(packages.items())]
+    # Build the complete replacement before touching the settings file.
     if include_sources:
         settings['source_stations'] = discover_sources(root)
         settings['source_search_folder'] = str(root)
-    for source in settings.get('source_stations', []):
-        source['packages'] = [item['package'] for item in settings['compiled_stations']
-                              if item['program'] == source['program']]
-        source['compiled'] = bool(source['packages'])
+    else:
+        associations = {item['package']: item.get('program')
+                        for item in settings.get('compiled_stations', [])}
+        associations.update(config.get('sources', {}))
+        settings['compiled_stations'] = [package_record(path, manifest, associations.get(str(path)))
+                                         for path, manifest in discover(root)]
+    update_source_links(settings)
     save_settings(settings)
-    # Subsequent choices must use the persisted catalog, not the search snapshot.
     return load_settings()
+
+
+def register_build(package, program):
+    # Successful compilation adds exactly its output, without running a search.
+    settings = load_settings()
+    record = package_record(package, package_manifest(package), str(program))
+    settings['compiled_stations'] = [item for item in settings.get('compiled_stations', [])
+                                     if item['package'] != str(package)] + [record]
+    update_source_links(settings)
+    save_settings(settings)
 
 
 def show_sources(settings):
@@ -477,7 +496,7 @@ def main():
                     selected = integer('Номер исходной станции (0 — отмена)', 0, 0, len(sources))
                     if selected:
                         compile_source(sources[selected - 1], config)
-                        settings = refresh_catalog(root, config)
+                        settings = load_settings()
                         show_sources(settings)
                 continue
             if choice == '4':
@@ -507,7 +526,6 @@ def main():
                 manifest = package_manifest(package)
                 if choice == '2':
                     rebuild(package, manifest, config)
-                    refresh_catalog(root, config)
                 else:
                     launch(package, config)
         except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
