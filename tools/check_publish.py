@@ -28,6 +28,7 @@ PUBLIC_PATHS = frozenset({
     "tools/menu-settings.json",
     "src/gateway.rs", "src/modbus.rs", "src/ua.rs", "tests/protocols.rs",
     "tests/protocol_network.py", "PROTOCOLS.md",
+    "tools/station_protocols.py", "tests/test_station_protocols.py",
 })
 MAX_BLOB = 2 * 1024 * 1024
 WINDOW = 16

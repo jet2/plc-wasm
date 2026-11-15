@@ -76,9 +76,21 @@ def make_map(compiler, manifest, table_directory):
             if key in numbers:
                 raise CompileError('duplicate DB symbol')
             numbers[key] = int(match[1])
+    scalar_symbols = {}
+    for symbol in symbols(table_directory / 'SymbolTable.asc'):
+        scalar_symbols.setdefault(symbol['name'].upper(), symbol)
+    signals = []
     blocks, by_address, used = [], {}, set()
     for name, (offset, layout) in compiler.globals.items():
         if name not in compiler.project.dbs:
+            symbol = scalar_symbols.get(name)
+            if symbol is None:
+                raise CompileError(f'missing process symbol: {name}')
+            location = re.fullmatch(r'([IQMEAB])(?:[BWD])?\s*\d+(?:\.\d+)?', symbol['address'], re.I)
+            if location is None or layout.kind not in {'BOOL', 'BYTE', 'WORD', 'INT', 'DWORD', 'DINT', 'REAL'}:
+                raise CompileError(f'unsupported process symbol: {name}')
+            signals.append(dict(name=name, offset=offset, bit=0, kind=layout.kind, capacity=0,
+                                writable=location[1].upper() in {'I', 'E'}, aliases=[symbol['name']]))
             continue
         if name not in numbers or numbers[name] in used:
             raise CompileError(f'missing or duplicate DB number for {name}')
@@ -115,6 +127,14 @@ def make_map(compiler, manifest, table_directory):
                 aliases.append(symbol['name'])
             field['writable'] |= writable
         checked[filename] = len(entries)
+    db_names = {n.upper() for block in blocks for field in block['fields']
+                for n in [field['name'], *field.get('aliases', [])]}
+    for field in signals:
+        original = field['aliases'][0]
+        field['name'] = 'IO.' + field['name']
+        if original.upper() in db_names:
+            # Existing DB tag names remain stable; bus mappings use the qualified process name.
+            field['aliases'] = ['IO.' + original]
     return dict(version=1, module_sha256=manifest['module_sha256'],
                 output_offset=manifest['outputs']['offset'], output_size=manifest['outputs']['size'],
-                blocks=blocks), checked
+                blocks=blocks, signals=signals), checked

@@ -48,7 +48,7 @@ class Simulator:
                 if function == 3:
                     response = bytes([3, count * 2]) + struct.pack('>' + 'H' * count, *([42] * count))
                 elif function == 1:
-                    response = bytes([1, (count + 7) // 8]) + bytes([1] * ((count + 7) // 8))
+                    response = bytes([1, (count + 7) // 8]) + bytes([3] * ((count + 7) // 8))
                 elif function == 16:
                     values = struct.unpack('>' + 'H' * count, pdu[6:])
                     self.registers.update(enumerate(values, address))
@@ -99,12 +99,12 @@ async def main(args):
     port, s7_port = free_port(), free_port()
     settings = {
         'period_ms': 50,
-        'opcua': {'port': port, 'pki_dir': str(directory / 'pki'), 'tags': ['Input', 'Command', 'Real', 'Flag', 'Text']},
+        'opcua': {'port': port, 'pki_dir': str(directory / 'pki'), 'tags': ['Input', 'Command', 'Real', 'Flag', 'Text', 'ProcessFlag']},
         'snap7': {'library': str(args.snap7.resolve()), 'port': s7_port} if args.snap7 else None,
         'modbus': [{'name': 'sim', 'address': '127.0.0.1', 'port': mb_port, 'unit': 1, 'poll_ms': 50, 'timeout_ms': 250,
                     'requests': [
                         {'operation': 'read_holding_registers', 'address': 0, 'fields': ['Input']},
-                        {'operation': 'read_coils', 'address': 0, 'fields': ['Flag']},
+                        {'operation': 'read_coils', 'address': 0, 'fields': ['Flag', 'ProcessFlag']},
                         {'operation': 'write_registers', 'address': 10, 'fields': ['Command', 'Real']},
                     ]}],
     }
@@ -135,6 +135,7 @@ async def main(args):
                     return value.StatusCode.is_good() and value.Value.Value == 42
                 await eventually(input_ready)
                 assert await nodes['Flag'].read_value() is True
+                assert await nodes['ProcessFlag'].read_value() is True
                 assert await client.nodes.objects.get_children()
                 changes = Changes()
                 subscription = await client.create_subscription(100, changes)
@@ -152,7 +153,7 @@ async def main(args):
                     return 2345 in changes.values and simulator.registers.get(10) == 2345
                 await eventually(changed)
                 assert 7 not in changes.values, 'Write admission emitted initial cached value'
-                for name, value, kind in [('Input', 5, ua.VariantType.UInt16), ('Real', 2.0, ua.VariantType.Double),
+                for name, value, kind in [('Input', 5, ua.VariantType.UInt16), ('ProcessFlag', False, ua.VariantType.Boolean), ('Real', 2.0, ua.VariantType.Double),
                                           ('Real', float('nan'), ua.VariantType.Float), ('Text', '123456789', ua.VariantType.String)]:
                     try:
                         await nodes[name].write_value(value, kind)

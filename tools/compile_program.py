@@ -25,7 +25,7 @@ def write_build(compiler, output, runtime=None, s7_tables=None, **options):
         raise CompileError('S7 map generation requires --runtime to bind the map to packaged Wasm')
     if s7_tables is not None:
         (output / 's7-map.json').unlink(missing_ok=True)
-    manifest, wat, report = compiler.compile(**options)
+    manifest, wat, report = compiler.compile(process_signals=s7_tables is not None, **options)
     output.mkdir(parents=True, exist_ok=True)
     for filename, data in [("manifest.json", manifest), ("build.json", report)]:
         (output / filename).write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf8")
@@ -61,15 +61,26 @@ def main():
     parser.add_argument("--runtime", type=Path)
     parser.add_argument('--system-profile', choices=['strict', 'cyclic-sim'], default='strict')
     parser.add_argument('--s7-map', action='store_true', help='emit and verify a local DB map against exported address tables')
+    parser.add_argument('--station', type=Path, help='station folder: validate MPR/USO pair and generate protocols.json')
     parser.add_argument('--fuel-per-call', type=int, default=10000000,
                         help='Wasm execution budget, 1..100000000; not a cycle time')
     args = parser.parse_args()
     try:
+        if args.station:
+            from station_protocols import station_files, generate
+            if not args.s7_map:
+                raise CompileError('--station requires --s7-map')
+            station_files(args.station)
         report = write_build(Compiler(load_project(args.project), args.system_profile), args.output, args.runtime,
                              s7_tables=args.project / 'Tables' if args.s7_map else None,
                              entry=args.entry, init=args.init, presets=args.presets, watches=args.watch, name=args.name,
                              fuel_per_call=args.fuel_per_call)
-    except CompileError as error:
+        if args.station:
+            mapping = json.loads((args.output / 's7-map.json').read_text(encoding='utf8'))
+            output = args.output / 'protocols.json'
+            config = generate(args.station, args.project / 'Tables', mapping, output)
+            output.write_text(json.dumps(config, ensure_ascii=False, indent=2) + '\n', encoding='utf8')
+    except (CompileError, ValueError) as error:
         parser.exit(2, str(error) + "\n")
     print(f"Compiled {len(report['functions'])} functions, {len(report['globals'])} globals, {report['state_bytes']} state bytes")
 

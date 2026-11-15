@@ -58,6 +58,7 @@ fn fixture(scan: &str) -> (Runtime, Map) {
         });
     }
     let map = Map {
+        signals: vec![],
         version: 1,
         module_sha256: package.manifest.module_sha256.clone(),
         output_offset: 16,

@@ -196,6 +196,7 @@ pub fn build(
                 .blocks
                 .iter()
                 .flat_map(|b| &b.fields)
+                .chain(guard.map().signals.iter())
                 .flat_map(|f| f.aliases.iter().cloned())
                 .collect()
         } else {
@@ -267,8 +268,16 @@ pub fn build(
             if folders.insert(db) {
                 space.add_folder(
                     &parent,
-                    format!("DB{db}"),
-                    format!("DB{db}"),
+                    if db == 0 {
+                        "Process signals".to_owned()
+                    } else {
+                        format!("DB{db}")
+                    },
+                    if db == 0 {
+                        "Process signals".to_owned()
+                    } else {
+                        format!("DB{db}")
+                    },
                     &NodeId::objects_folder_id(),
                 );
             }

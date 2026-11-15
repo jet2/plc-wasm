@@ -191,7 +191,10 @@ def saved_packages(settings):
 def build_output(program):
     """Place each build beside the nearest ancestor's MPR project."""
     for directory in program.resolve().parents:
-        if any(path.is_file() and path.suffix.lower() == '.mpr' for path in directory.iterdir()):
+        projects = [path for path in directory.iterdir() if path.is_file() and path.suffix.lower() == '.mpr']
+        if len(projects) > 1:
+            raise ValueError(f'ALARM: несколько .mpr в {directory}; выбор станции неоднозначен.')
+        if projects:
             return directory / 'wplc-build' / datetime.now().strftime('%Y%m%d-%H%M%S-%f')
     raise ValueError('Файл .mpr не найден в родительских папках Program; каталог сборки не определён.')
 
@@ -218,7 +221,8 @@ def compile_source(source, config):
     output = build_output(program)
     command = [sys.executable, str(ROOT / 'tools/compile_program.py'), str(program),
                '--entry', entry, '--name', source['name'], '--system-profile', profile,
-               '--fuel-per-call', str(fuel), '--output', str(output), '--runtime', str(runtime), '--s7-map']
+               '--fuel-per-call', str(fuel), '--output', str(output), '--runtime', str(runtime), '--s7-map',
+               '--station', str(output.parent.parent)]
     if init != '-':
         for function in init.split(','):
             if function.strip():
@@ -273,6 +277,8 @@ def build_command(package, manifest, source, output, runtime):
             command.extend([flag, value])
     if package.with_name('s7-map.json').is_file():
         command.append('--s7-map')
+        if output.parent.name == 'wplc-build':
+            command.extend(['--station', str(output.parent.parent)])
     return command
 
 
@@ -313,8 +319,10 @@ def launch(package, config):
         config['snap7'] = str(library)
         command = [str(runtime), 'serve', str(package), str(mapping), str(library), str(port), str(period), '0']
     elif mode == '3':
-        default = ROOT / '.local-validation' / 'protocols.json'
-        settings = Path(ask('JSON настроек протоколов', config.get('protocols', str(default)))).expanduser().resolve()
+        default = package.with_name('protocols.json')
+        if not default.is_file():
+            default = Path(config.get('protocols', ROOT / '.local-validation' / 'protocols.json'))
+        settings = Path(ask('JSON настроек протоколов', str(default))).expanduser().resolve()
         if not settings.exists():
             settings.parent.mkdir(parents=True, exist_ok=True)
             settings.write_text(json.dumps({
@@ -496,7 +504,7 @@ def build_files(package):
                and any(p.is_file() and p.suffix.lower() == '.mpr' for p in folder.parent.parent.iterdir()))
     if not local and not station:
         raise ValueError(f'Папка не является каталогом сборки: {folder}')
-    allowed = {'program.pkg', 'program.wat', 'manifest.json', 'build.json', 's7-map.json', 's7-map.json.tmp'}
+    allowed = {'program.pkg', 'program.wat', 'manifest.json', 'build.json', 's7-map.json', 's7-map.json.tmp', 'protocols.json'}
     files = list(folder.iterdir())
     if not files or any(p.name not in allowed or not p.is_file() or p.is_symlink()
                         or getattr(p.lstat(), 'st_file_attributes', 0) & 0x400 for p in files):

@@ -127,6 +127,9 @@ pub struct Map {
     pub output_offset: u32,
     pub output_size: u32,
     pub blocks: Vec<Block>,
+    /// Named process signals stored in independent Wasm scalar slots (bit must be zero).
+    #[serde(default)]
+    pub signals: Vec<Field>,
 }
 
 impl Map {
@@ -150,16 +153,32 @@ impl Map {
         let mut names = HashSet::new();
         let mut count = 0usize;
         let mut total_size = 0usize;
-        for block in &self.blocks {
-            ensure!(
-                block.number != 0 && numbers.insert(block.number),
-                "invalid or duplicate DB number"
-            );
-            ensure!((1..=65536).contains(&block.size), "invalid DB size");
-            total_size += block.size as usize;
+        for (number, size, fields) in self
+            .blocks
+            .iter()
+            .map(|b| (Some(b.number), b.size, b.fields.as_slice()))
+            .chain(
+                self.signals
+                    .iter()
+                    .map(|f| (None, 4, std::slice::from_ref(f))),
+            )
+        {
+            if let Some(number) = number {
+                ensure!(
+                    number != 0 && numbers.insert(number),
+                    "invalid or duplicate DB number"
+                );
+            } else {
+                ensure!(
+                    fields[0].bit == 0 && fields[0].kind != Kind::String,
+                    "process signal must be a scalar at bit zero"
+                );
+            }
+            ensure!((1..=65536).contains(&size), "invalid DB size");
+            total_size += size as usize;
             ensure!(total_size <= 16 * 1024 * 1024, "S7 snapshot too large");
-            let mut occupied = vec![false; block.size as usize * 8];
-            for field in &block.fields {
+            let mut occupied = vec![false; size as usize * 8];
+            for field in fields {
                 count += 1;
                 ensure!(count <= 1_000_000, "too many S7 fields");
                 ensure!(
@@ -229,6 +248,16 @@ impl Map {
         }
         Ok(result)
     }
+    fn signal_snapshot(&self, state: &[u8]) -> Result<BTreeMap<u32, Vec<u8>>> {
+        self.signals
+            .iter()
+            .map(|field| {
+                let mut bytes = vec![0; field.bytes()];
+                field.encode(state, self.output_offset, &mut bytes)?;
+                Ok((field.offset, bytes))
+            })
+            .collect()
+    }
 }
 
 /// Owns the VM and immutable published DB images. Network adapters must copy reads.
@@ -241,6 +270,8 @@ pub struct Bridge {
     generation: u64,
     names: HashMap<String, Option<(usize, usize)>>,
     device_pending: BTreeMap<u32, Vec<u8>>,
+    published_signals: BTreeMap<u32, Vec<u8>>,
+    signal_pending: BTreeMap<u32, Vec<u8>>,
 }
 
 impl Bridge {
@@ -248,6 +279,7 @@ impl Bridge {
         map.validate(&runtime.manifest)?;
         ensure!(!runtime.is_faulted(), "cannot attach faulted runtime");
         let published = map.snapshot(runtime.outputs())?;
+        let published_signals = map.signal_snapshot(runtime.outputs())?;
         let mut names = HashMap::new();
         for (block_index, block) in map.blocks.iter().enumerate() {
             for (field_index, field) in block.fields.iter().enumerate() {
@@ -264,6 +296,19 @@ impl Bridge {
                 }
             }
         }
+        for (index, field) in map.signals.iter().enumerate() {
+            let location = Some((map.blocks.len(), index));
+            for name in std::iter::once(&field.name).chain(field.aliases.iter()) {
+                names
+                    .entry(name.to_ascii_uppercase())
+                    .and_modify(|old| {
+                        if *old != location {
+                            *old = None;
+                        }
+                    })
+                    .or_insert(location);
+            }
+        }
         Ok(Self {
             runtime,
             map,
@@ -273,6 +318,8 @@ impl Bridge {
             generation: 0,
             names,
             device_pending: BTreeMap::new(),
+            published_signals,
+            signal_pending: BTreeMap::new(),
         })
     }
     pub fn map(&self) -> &Map {
@@ -300,12 +347,18 @@ impl Bridge {
             .context("unknown field name")?
             .as_ref()
             .context("ambiguous tag alias; use complete field path")?;
+        if block_index == self.map.blocks.len() {
+            return Ok((0, self.map.signals[field_index].clone()));
+        }
         let block = &self.map.blocks[block_index];
         Ok((block.number, block.fields[field_index].clone()))
     }
     /// Returns S7 bytes, or one canonical 0/1 byte for a BOOL.
     pub fn read_named(&self, name: &str) -> Result<Vec<u8>> {
         let (db, field) = self.named(name)?;
+        if db == 0 {
+            return Ok(self.published_signals[&field.offset].clone());
+        }
         if field.kind == Kind::Bool {
             return Ok(vec![
                 self.read_bit(db, field.bit as usize / 8, (field.bit % 8) as u8)? as u8,
@@ -314,9 +367,16 @@ impl Bridge {
         self.read_db(db, field.bit as usize / 8, field.bytes())
     }
     pub fn queue_named(&mut self, name: &str, data: &[u8]) -> Result<()> {
+        ensure!(!self.is_faulted(), "bridge is faulted");
         let (db, field) = self.named(name)?;
         ensure!(field.writable, "field is read-only");
         ensure!(data.len() == field.bytes(), "wrong field size");
+        if db == 0 {
+            ensure!(field.kind != Kind::Bool || data[0] <= 1, "invalid BOOL");
+            self.signal_pending
+                .insert(field.offset, field.decode(data)?);
+            return Ok(());
+        }
         if field.kind == Kind::Bool {
             ensure!(data[0] <= 1, "BOOL must be 0 or 1");
             return self.queue_bit(
@@ -389,6 +449,7 @@ impl Bridge {
     pub fn discard_pending(&mut self) {
         self.pending.clear();
         self.device_pending.clear();
+        self.signal_pending.clear();
     }
     /// Explicitly configured field inputs, independent of HMI write permissions.
     /// A failed batch changes nothing. Device input patches take priority over HMI writes.
@@ -398,7 +459,11 @@ impl Bridge {
         for (name, value) in values {
             let (db, field) = self.named(name)?;
             ensure!(value.len() == field.bytes(), "wrong device field size");
-            let mut snapshot = self.published[&db].clone();
+            let mut snapshot = if db == 0 {
+                self.published_signals[&field.offset].clone()
+            } else {
+                self.published[&db].clone()
+            };
             let byte = field.bit as usize / 8;
             if field.kind == Kind::Bool {
                 ensure!(value[0] <= 1, "invalid device BOOL");
@@ -441,6 +506,11 @@ impl Bridge {
             }
         }
         patches.extend(
+            self.signal_pending
+                .iter()
+                .map(|(offset, value)| (*offset, value.clone())),
+        );
+        patches.extend(
             self.device_pending
                 .iter()
                 .map(|(offset, value)| (*offset, value.clone())),
@@ -448,13 +518,19 @@ impl Bridge {
         self.runtime.patch_state(&patches)?;
         self.pending.clear();
         self.device_pending.clear();
+        self.signal_pending.clear();
         if let Err(error) = self.runtime.cycle(inputs, elapsed_ms) {
             self.faulted = true;
             return Err(error);
         }
-        match self.map.snapshot(self.runtime.outputs()) {
-            Ok(snapshot) => {
+        match self.map.snapshot(self.runtime.outputs()).and_then(|dbs| {
+            self.map
+                .signal_snapshot(self.runtime.outputs())
+                .map(|signals| (dbs, signals))
+        }) {
+            Ok((snapshot, signals)) => {
                 self.published = snapshot;
+                self.published_signals = signals;
                 self.generation += 1;
                 Ok(())
             }

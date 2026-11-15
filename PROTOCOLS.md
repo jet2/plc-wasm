@@ -9,10 +9,62 @@ station-runtime gateway PROGRAM.pkg MAP.json PROTOCOLS.json [CYCLES]
 ```
 
 `CYCLES=0` (default) runs until Ctrl+C. Finite runs include the startup scan.
-The station menu's launch action offers mode 3 for this command. On first use
-it creates `.local-validation/protocols.json` enabling OPC UA only. Add Modbus
-device mappings and, if needed, the Snap7 library and port to that file. Keep
+The station menu's launch action offers mode 3 for this command. New builds
+created through the menu include a local `protocols.json` generated from the
+station's `.uso`, `SymbolTable.asc`, and compiled map. Launch prefers that file.
+For old builds without it, the menu falls back to a saved configuration or
+creates `.local-validation/protocols.json` enabling OPC UA only. Keep
 station-specific configurations local; do not publish program-derived maps.
+
+## WEmulator station contract
+
+Validated on Windows with 27 Rust tests, 29 Python tests and an independent
+asyncua/Modbus/Snap7 network test. Linux target compilation also passed (Linux
+execution was not tested). A local Station 7 run against WEmulator's actual I/O
+library completed 600 scans with nine slaves online, no Modbus failures and no
+100 ms cycle overruns; mean scan times per report were 3.8–5.6 ms. All seven
+slaves containing outputs received writes. Maps for stations 6, 7 and 9 were
+generated and loaded; station data and logs remain private.
+
+Bus inputs and outputs use Modbus; remaining tags use named OPC UA nodes
+`tag/<table symbol>` in namespace `urn:plc-wasm:tags`. Default UA port is 4841.
+No address-based OPC UA namespace is required by this integration.
+
+Rebuild with the current compiler to include named I/Q/M process signals in
+the map. They reference independent Wasm scalar slots, not synthetic DBs.
+Snap7 DB access is unchanged. Process inputs are writable; Q/M signals are
+read-only to UA. Mapped Modbus inputs reject UA writes and report bus quality.
+All accepted writes become visible after a successful PLC scan.
+Mapped builds reserve all scalar process symbols, including contacts unused by
+the scan graph. Such slots start at zero and retain their value unless written.
+Process fields have qualified names `IO.<symbol>` for unambiguous bus mappings.
+Their table names are UA aliases unless already used by a DB tag; in that case
+the process alias is also qualified with `IO.` and the existing DB name is preserved.
+
+`compile_program.py --station STATION_FOLDER --s7-map ...` also generates the
+configuration. To regenerate settings for an existing current map:
+
+```text
+python tools/station_protocols.py STATION_FOLDER --tables PROGRAM/Tables --map BUILD/s7-map.json --output BUILD/protocols.json
+```
+
+The folder must contain exactly one `.mpr` and one matching `.uso` basename
+(case insensitive). Multiple `.mpr` files cause ALARM and a nonzero exit.
+The generator rejects an existing output unless `--force` is explicit.
+
+For slave N in `[Slaves]`, master defaults are `127.0.0.1`, port `15000+N`,
+Unit ID N (1..255). `[slaves_ip]` and `[slaves_port]` in the USO independently
+override the master's destination; they do not change WEmulator listeners.
+The generated JSON is the runtime configuration: later USO edits require
+regeneration. Manual JSON edits take effect when that JSON is loaded.
+
+Modules retain section row order. Type 0 allocates input registers, type 1
+allocates a separate output space. Analog modules allocate one register per
+channel; discrete modules allocate ceil(channels/16) registers, least-significant
+bit first. Inputs use FC2/FC4; outputs use FC15/FC16. Only consecutive mapped
+contacts are combined; gaps are never written. Unsupported module types with
+contacts, missing compiled symbols, duplicate targets, invalid endpoints and
+wrong signal directions are errors. Modules without requests remain disabled.
 
 Example configuration with generic field names (replace with names from your
 station map):

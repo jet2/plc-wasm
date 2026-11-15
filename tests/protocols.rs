@@ -60,6 +60,15 @@ fn fixture() -> (Vec<u8>, Map) {
     (
         package,
         Map {
+            signals: vec![Field {
+                name: "ProcessFlag".into(),
+                offset: 44,
+                bit: 0,
+                kind: Kind::Bool,
+                capacity: 0,
+                writable: true,
+                aliases: vec!["AliasProcessFlag".into()],
+            }],
             version: 1,
             module_sha256: hash,
             output_offset: 16,
@@ -79,6 +88,43 @@ fn bridge() -> Bridge {
         map,
     )
     .unwrap()
+}
+
+#[test]
+fn process_signals_share_cycle_boundary_and_device_priority() {
+    let (package, mut map) = fixture();
+    let mut input = map.blocks[0].fields.remove(0);
+    input.bit = 0;
+    input.writable = true;
+    let mut command = map.blocks[0].fields.remove(0);
+    command.bit = 0;
+    command.writable = false;
+    map.signals = vec![input, command];
+    let manifest = Package::decode(&package).unwrap().manifest;
+    let mut invalid = map.clone();
+    invalid.signals[0].offset = invalid.blocks[0].fields[0].offset;
+    assert!(invalid.validate(&manifest).is_err());
+    let mut invalid = map.clone();
+    invalid.signals[0].bit = 8;
+    assert!(invalid.validate(&manifest).is_err());
+    let mut bridge = Bridge::new(
+        Runtime::load(Package::decode(&package).unwrap()).unwrap(),
+        map,
+    )
+    .unwrap();
+    bridge.queue_named("AliasInput", &[0, 11]).unwrap();
+    bridge
+        .queue_device_inputs(&[("Input".into(), vec![0, 22])])
+        .unwrap();
+    assert_eq!(bridge.read_named("Input").unwrap(), [0, 0]);
+    assert_eq!(bridge.read_named("AliasCommand").unwrap(), [0, 7]);
+    assert!(bridge.queue_named("Command", &[0, 99]).is_err());
+    bridge.cycle(&[], 100).unwrap();
+    assert_eq!(bridge.read_named("Input").unwrap(), [0, 22]);
+    bridge.queue_named("Input", &[0, 33]).unwrap();
+    bridge.discard_pending();
+    bridge.cycle(&[], 100).unwrap();
+    assert_eq!(bridge.read_named("Input").unwrap(), [0, 22]);
 }
 fn device(address: std::net::SocketAddr) -> Device {
     Device {

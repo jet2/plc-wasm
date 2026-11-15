@@ -277,7 +277,8 @@ class Compiler:
             self.globals[name] = (len(self.initial_data), layout)
             self.initial_data.extend(layout.data)
 
-    def compile(self, entry, init=(), presets=(), watches=(), name="program", fuel_per_call=10000000):
+    def compile(self, entry, init=(), presets=(), watches=(), name="program", fuel_per_call=10000000,
+                process_signals=False):
         if type(fuel_per_call) is not int or not 1 <= fuel_per_call <= 100000000:
             raise CompileError('fuel_per_call must be between 1 and 100000000')
         # A Compiler instance is deliberately single-use.
@@ -285,6 +286,11 @@ class Compiler:
             raise ValueError("create a new Compiler for each build")
         for function in [*init, entry]:
             self.dependencies(function)
+        if process_signals:
+            # An exported I/O contact exists even when the current scan graph never references it.
+            token = self.project.function(entry).token
+            for name in self.project.scalars:
+                self.needed_roots.setdefault(name, token)
         parsed_sets = []
         for text in presets:
             parser = Parser(text + ";", "<preset>")
