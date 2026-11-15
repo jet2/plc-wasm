@@ -155,6 +155,12 @@ paths and runtime/library preferences are saved only in ignored
 not replaced. A failed build may leave diagnostic artifacts in its new folder.
 Hand-built packages without a compiler report cannot be rebuilt by this menu.
 
+S7/OPC UA maps include read-only route aliases from `RouteTags.asc` and control
+heartbeat aliases from the exported `*_OPC_Config.csv`. Every exported address
+is checked against the compiled DB layout. Old packages need recompilation for
+WEmulator's route controls and standalone operator heartbeat; PLC interlocks
+and route logic remain in the original compiled program.
+
 Launch requires an adjacent `s7-map.json`, and offers Snap7 (localhost, default
 port 102) or offline monitoring. An occupied port rejects the launch; the menu
 does not stop existing processes. Each launch gets its own executable copy under

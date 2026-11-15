@@ -1,5 +1,6 @@
 """Generate local S7 DB maps; generated maps are protected project artifacts."""
 import re
+import csv
 from scl_frontend import CompileError
 from scl_audit import symbols, read_source
 
@@ -108,7 +109,10 @@ def make_map(compiler, manifest, table_directory):
             by_address[number, bit] = item
         blocks.append(dict(number=number, size=size // 8, fields=fields))
     checked = {}
-    for filename, writable in [('DSP_Read_Table.asc', False), ('DSP_Write_Table.asc', True)]:
+    references = [('DSP_Read_Table.asc', False), ('DSP_Write_Table.asc', True)]
+    if (table_directory / 'RouteTags.asc').is_file():
+        references.append(('RouteTags.asc', False))
+    for filename, writable in references:
         path = table_directory / filename
         if not path.is_file():
             raise CompileError(f'required address reference missing: {filename}')
@@ -127,6 +131,27 @@ def make_map(compiler, manifest, table_directory):
                 aliases.append(symbol['name'])
             field['writable'] |= writable
         checked[filename] = len(entries)
+    controls = {'SEConnected', 'StationView_StationCode', 'StationView_WatchDog', 'StationView_Connected'}
+    control_addresses = {}
+    for path in sorted(table_directory.glob('*_OPC_Config.csv')):
+        for row in csv.reader(read_source(path).splitlines(), delimiter=';'):
+            if len(row) < 4 or row[2] not in controls:
+                continue
+            match = re.search(r'DB(\d+),(INT|X)(\d+)(?:\.(\d+))?,1$', row[3])
+            if not match:
+                raise CompileError(f'unsupported control address for {row[2]}')
+            db, kind, byte, bit = match.groups()
+            location = (int(db), int(byte) * 8 + int(bit or 0))
+            if row[2] in control_addresses and control_addresses[row[2]] != location:
+                raise CompileError(f'ambiguous control address for {row[2]}')
+            control_addresses[row[2]] = location
+            field = by_address.get(location)
+            if field is None or field['kind'] != ('INT' if kind == 'INT' else 'BOOL'):
+                raise CompileError(f'control address disagrees with layout: {row[2]}')
+            aliases = field.setdefault('aliases', [])
+            if row[2] not in aliases:
+                aliases.append(row[2])
+            field['writable'] |= row[2] != 'StationView_Connected'
     db_names = {n.upper() for block in blocks for field in block['fields']
                 for n in [field['name'], *field.get('aliases', [])]}
     for field in signals:
