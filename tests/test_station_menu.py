@@ -14,6 +14,24 @@ import station_menu as menu
 
 
 class StationMenuTests(unittest.TestCase):
+    def test_build_output_is_beside_nearest_mpr(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            station = Path(temporary).resolve()
+            program = station / 'project/Program'
+            program.mkdir(parents=True)
+            (station / 'Station.MPR').touch()
+            output = menu.build_output(program)
+            self.assertEqual(output.parent, station / 'wplc-build')
+            self.assertFalse(output.exists())
+            (program.parent / 'Nested.mpr').touch()
+            self.assertEqual(menu.build_output(program).parent, program.parent / 'wplc-build')
+
+    def test_build_output_requires_mpr(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.object(menu.Path, 'iterdir', return_value=iter([])):
+                with self.assertRaisesRegex(ValueError, '.mpr'):
+                    menu.build_output(Path(temporary) / 'Program')
+
     def test_register_build_adds_output_without_search_or_clearing(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -144,6 +162,7 @@ class StationMenuTests(unittest.TestCase):
             config = {}
             with patch('builtins.input', side_effect=['entry', '-', 'strict', '10000000']), \
                     patch.object(menu, 'runtime_path', return_value=root / 'runtime'), \
+                    patch.object(menu, 'build_output', return_value=root / 'output'), \
                     patch.object(menu.subprocess, 'run', side_effect=menu.subprocess.CalledProcessError(1, 'compiler')), \
                     patch.object(menu, 'save_config') as save:
                 with self.assertRaises(menu.subprocess.CalledProcessError):

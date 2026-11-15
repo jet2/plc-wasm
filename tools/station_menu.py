@@ -187,6 +187,14 @@ def saved_packages(settings):
             for item in settings.get('compiled_stations', [])]
 
 
+def build_output(program):
+    """Place each build beside the nearest ancestor's MPR project."""
+    for directory in program.resolve().parents:
+        if any(path.is_file() and path.suffix.lower() == '.mpr' for path in directory.iterdir()):
+            return directory / 'wplc-build' / datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+    raise ValueError('Файл .mpr не найден в родительских папках Program; каталог сборки не определён.')
+
+
 def compile_source(source, config):
     program = Path(source['program'])
     if source_directory(program) is None or not (program / 'Tables').is_dir():
@@ -206,7 +214,7 @@ def compile_source(source, config):
         raise ValueError('Неизвестный профиль.')
     fuel = integer('Бюджет Wasm на вызов', report.get('fuel_per_call', 10000000), 1, 100000000)
     runtime = runtime_path(config)
-    output = ROOT / 'build/compiled' / program.parent.name / datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+    output = build_output(program)
     command = [sys.executable, str(ROOT / 'tools/compile_program.py'), str(program),
                '--entry', entry, '--name', source['name'], '--system-profile', profile,
                '--fuel-per-call', str(fuel), '--output', str(output), '--runtime', str(runtime), '--s7-map']
@@ -218,6 +226,7 @@ def compile_source(source, config):
     subprocess.run(command, cwd=ROOT, check=True)
     config.setdefault('sources', {})[str(output / 'program.pkg')] = str(program)
     save_config(config)
+    register_build(output / 'program.pkg', program)
     print(f'Готово: {output / "program.pkg"}')
 
 
@@ -272,7 +281,7 @@ def rebuild(package, manifest, config):
     if source_directory(source) is None or not (source / 'Tables').is_dir():
         raise ValueError('Нужна папка проекта с подпапками Source и Tables.')
     runtime = runtime_path(config)
-    output = ROOT / 'build/recompiled' / package.parent.name / datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+    output = build_output(source)
     command = build_command(package, manifest, source, output, runtime)
     sources[str(package)] = str(source)
     save_config(config)
@@ -280,6 +289,7 @@ def rebuild(package, manifest, config):
     subprocess.run(command, cwd=ROOT, check=True)
     sources[str(output / 'program.pkg')] = str(source)
     save_config(config)
+    register_build(output / 'program.pkg', source)
     print(f'Готово: {output / "program.pkg"}')
 
 

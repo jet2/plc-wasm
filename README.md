@@ -106,8 +106,12 @@ in `tools/menu-settings.json`, then reloads that file.
 Item 7 selects a saved source project for compilation, including projects that
 have never been built. It asks for the cyclic entry function, initialization
 functions, compiler profile and fuel budget; known local build reports supply
-defaults when available. Builds go to timestamped folders under `build/compiled/`
-and generate an S7 map. Successful builds are registered immediately.
+defaults when available. Builds go to `wplc-build/<timestamp>/` beside the station's
+`.mpr` file and generate an S7 map. The menu finds the nearest ancestor of the
+source `Program` directory containing an `.mpr` file (case-insensitive extension).
+If none is found, compilation fails before writing output. Successful builds
+are registered immediately. Generated station artifacts remain local and must
+not be published.
 
 The menu groups actions into compiled stations, source stations and controls,
 and shows the saved counts. Items 2, 3 and 7 display the corresponding list
@@ -141,8 +145,8 @@ Rebuild requires the original `build.json` next to the selected package and the
 external project folder containing `Source` and `Tables`. It preserves entry,
 initialization order, presets, watches, system profile and fuel budget. Source
 paths and runtime/library preferences are saved only in ignored
-`.local-validation/station-menu.json`. New builds go into timestamped directories
-under ignored `build/recompiled/`; existing packages and running stations are
+`.local-validation/station-menu.json`. Rebuilds use the same station-local
+`wplc-build/<timestamp>/` location beside `.mpr`; existing packages and running stations are
 not replaced. A failed build may leave diagnostic artifacts in its new folder.
 Hand-built packages without a compiler report cannot be rebuilt by this menu.
 
