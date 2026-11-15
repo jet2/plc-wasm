@@ -6,6 +6,8 @@ __pycache__/
 /.publish-sources.json
 /settings.json
 /settings.json.tmp
+/tools/menu-settings.json
+/tools/menu-settings.json.tmp
 /reports/
 /examples/
 *.scl

@@ -16,7 +16,9 @@ class StationMenuTests(unittest.TestCase):
     def test_settings_persist_folder_and_override_is_temporary(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
-            with patch.object(menu, 'ROOT', root), patch.object(menu, 'SETTINGS', root / 'settings.json'):
+            tools = root / 'tools'
+            tools.mkdir()
+            with patch.object(menu, 'ROOT', root), patch.object(menu, 'SETTINGS', tools / 'menu-settings.json'):
                 self.assertEqual(menu.search_folder(), root / 'build')
                 menu.SETTINGS.write_text(json.dumps({'stations_folder': 'nested', 'other': True}), encoding='utf-8-sig')
                 self.assertEqual(menu.search_folder(), root / 'nested')

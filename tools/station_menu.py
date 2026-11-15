@@ -15,7 +15,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / '.local-validation' / 'station-menu.json'
-SETTINGS = ROOT / 'settings.json'
+SETTINGS = Path(__file__).resolve().with_name('menu-settings.json')
 
 
 def read_json(path):
@@ -25,7 +25,7 @@ def read_json(path):
 def save_search_folder(root):
     settings = read_json(SETTINGS) if SETTINGS.exists() else {}
     if not isinstance(settings, dict):
-        raise ValueError('settings.json должен содержать JSON-объект.')
+        raise ValueError('menu-settings.json должен содержать JSON-объект.')
     settings['stations_folder'] = str(root.resolve())
     temporary = SETTINGS.with_suffix('.json.tmp')
     temporary.write_text(json.dumps(settings, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
@@ -39,10 +39,10 @@ def search_folder(override=None):
         save_search_folder(ROOT / 'build')
     settings = read_json(SETTINGS)
     if not isinstance(settings, dict):
-        raise ValueError('settings.json должен содержать JSON-объект.')
+        raise ValueError('menu-settings.json должен содержать JSON-объект.')
     value = settings.get('stations_folder')
     if not isinstance(value, str) or not value.strip():
-        raise ValueError('В settings.json требуется строка stations_folder с путём к папке.')
+        raise ValueError('В menu-settings.json требуется строка stations_folder с путём к папке.')
     path = Path(value).expanduser()
     return (path if path.is_absolute() else ROOT / path).resolve()
 
@@ -314,7 +314,7 @@ def stop_menu():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--root', type=Path, help='override stations_folder from settings.json for this run')
+    parser.add_argument('--root', type=Path, help='override stations_folder from menu-settings.json for this run')
     parser.add_argument('--list', action='store_true', help='list packages and exit')
     args = parser.parse_args()
     try:
