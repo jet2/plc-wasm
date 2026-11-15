@@ -103,8 +103,13 @@ def make_map(compiler, manifest, table_directory):
         original = compiler.project.dbs[name][0].text
         fields = []
         for suffix, wasm, bit, kind, capacity in leaves:
+            # The dispatcher acknowledges a received message by writing these
+            # two CRC fields back to the PLC.  Without that write the sender
+            # remains in its wait-for-echo state and the message queue stalls.
+            echo_crc = (original.upper() == 'DSP_INT_MESSAGE_ECHO'
+                        and suffix.upper() in {'.CRC', '.CRC_I'})
             item = dict(name=original + suffix, offset=offset + wasm, bit=bit,
-                        kind=kind, capacity=capacity, writable=False)
+                        kind=kind, capacity=capacity, writable=echo_crc)
             fields.append(item)
             by_address[number, bit] = item
         blocks.append(dict(number=number, size=size // 8, fields=fields))
