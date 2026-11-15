@@ -2,11 +2,12 @@
 /.toolchain/
 /build/
 __pycache__/
+*.pyc
+*.pyo
 /.local-validation/
 /.publish-sources.json
 /settings.json
 /settings.json.tmp
-/tools/menu-settings.json
 /tools/menu-settings.json.tmp
 /reports/
 /examples/

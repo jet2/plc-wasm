@@ -93,12 +93,14 @@ Do not copy projects into tracked paths to make tests or CI self-contained.
 
 Run `python tools/station_menu.py` for the Russian-language interactive menu:
 recursive package discovery, station rebuild and visible wplc launch. The default
-search folder is stored as `stations_folder` in local `tools/menu-settings.json`,
+search folder is stored as `stations_folder` in `tools/menu-settings.json`,
 next to the menu script. On first launch the menu creates it with the absolute path to
 `build/`. Relative paths in this file are resolved against the repository root.
 Menu item 5 saves the selected folder for subsequent launches. `--root PATH`
-overrides it for one run without changing the file. `tools/menu-settings.json` is ignored
-by Git, so machine-specific paths remain local.
+overrides it for one run without changing the file. At the user's request,
+`tools/menu-settings.json` is tracked with the tools, including machine-specific
+paths and station catalog metadata. Review changes before publishing; source
+contents and compiled station artifacts remain prohibited. Python caches are ignored.
 
 Menu item 6 recursively finds source projects: a `Program` directory must contain
 nonempty `Source` (or `Soure`) and `Tables` directories. It replaces `source_stations`

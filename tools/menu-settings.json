@@ -1,0 +1,34 @@
+{
+  "stations_folder": "C:\\lgok",
+  "compiled_stations": [
+    {
+      "package": "C:\\lgok\\Station_9\\wplc-build\\20261115-034223-087136\\program.pkg",
+      "name": "S7_MSU5_Project",
+      "program": "C:\\lgok\\Station_9\\S7_MSU5_Project\\Program",
+      "s7_map": true
+    }
+  ],
+  "source_stations": [
+    {
+      "name": "S7_MSU5_Project",
+      "program": "C:\\lgok\\Station_7\\S7_MSU5_Project\\Program",
+      "packages": [],
+      "compiled": false
+    },
+    {
+      "name": "S7_MSU5_Project",
+      "program": "C:\\lgok\\Station_9\\S7_MSU5_Project\\Program",
+      "packages": [
+        "C:\\lgok\\Station_9\\wplc-build\\20261115-034223-087136\\program.pkg"
+      ],
+      "compiled": true
+    },
+    {
+      "name": "S7_Station_Project",
+      "program": "C:\\lgok\\lgok_Station_6\\S7_Station_Project\\Program",
+      "packages": [],
+      "compiled": false
+    }
+  ],
+  "source_search_folder": "C:\\lgok"
+}

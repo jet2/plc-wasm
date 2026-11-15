@@ -22,7 +22,8 @@
 
 ### Настройки, поиск и сборка
 
-- `tools/menu-settings.json` находится рядом со скриптом и исключён из Git.
+- `tools/menu-settings.json` находится рядом со скриптом и публикуется по прямому
+  указанию пользователя вместе с папкой `tools`, кроме Python-кэша.
   Ключи: `stations_folder`, `compiled_stations`, `source_stations`, `source_search_folder`.
   Каталоги содержат пути, названия и связи проектов со сборками; содержимого SCL в них нет.
 - `.local-validation/station-menu.json` хранит локальные пути runtime/Snap7 и словарь
