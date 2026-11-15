@@ -344,7 +344,12 @@ def launch(package, config, mode=None):
     shutil.copy2(runtime, executable)
     command[0] = str(executable)
     if os.name == 'nt':
-        process = subprocess.Popen(command, cwd=ROOT, creationflags=subprocess.CREATE_NEW_CONSOLE)
+        startup = subprocess.STARTUPINFO()
+        startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startup.wShowWindow = 1  # SW_SHOWNORMAL: do not inherit a hidden menu window.
+        process = subprocess.Popen(command, cwd=ROOT,
+                                   creationflags=subprocess.CREATE_NEW_CONSOLE,
+                                   startupinfo=startup)
     elif shutil.which('x-terminal-emulator'):
         process = subprocess.Popen(['x-terminal-emulator', '-e', *command], cwd=ROOT)
     elif shutil.which('gnome-terminal'):

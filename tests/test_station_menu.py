@@ -32,6 +32,11 @@ class StationMenuTests(unittest.TestCase):
             self.assertEqual(menu.read_json(settings)['opcua']['port'], 4841)
             self.assertEqual(config['protocols'], str(settings.resolve()))
             command = start.call_args.args[0]
+            if menu.os.name == 'nt':
+                options = start.call_args.kwargs
+                self.assertEqual(options['creationflags'], menu.subprocess.CREATE_NEW_CONSOLE)
+                self.assertTrue(options['startupinfo'].dwFlags & menu.subprocess.STARTF_USESHOWWINDOW)
+                self.assertEqual(options['startupinfo'].wShowWindow, 1)
             # A Linux terminal emulator may prefix the command.
             gateway = command.index('gateway')
             self.assertEqual(command[gateway + 1:], [str(package), str(package.with_name('s7-map.json')), str(settings.resolve()), '0'])
