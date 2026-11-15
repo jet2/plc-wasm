@@ -109,15 +109,22 @@ functions, compiler profile and fuel budget; known local build reports supply
 defaults when available. Builds go to timestamped folders under `build/compiled/`
 and generate an S7 map. Successful builds are registered immediately.
 
+The menu groups actions into compiled stations, source stations and controls,
+and shows the saved counts. Items 2, 3 and 7 display the corresponding list
+directly from settings; opening these subsections never triggers a search.
+Settings are reloaded each time. Missing packages remain visible as unavailable;
+the selected package is checked before launch or rebuild. An empty catalog
+prompts the user to run an explicit search.
+
 Item 1 refreshes and saves the package catalog. The search includes the selected
 folder, local `build/` and previously cataloged package folders. Items 2 and 3
-select saved packages for rebuilding and launching; missing or malformed files
-are excluded. Source projects are marked as compiled only when a known local
+select saved packages for rebuilding and launching. An explicit search removes
+missing or malformed files from the catalog. Source projects are marked as compiled only when a known local
 source-to-package association exists. This indicates an available build, not
 that it is current with the source files. The folder discovery rule alone does
 not guarantee that a project has valid SCL or all tables required by compilation.
-`python tools/station_menu.py --list --root PATH` refreshes the saved package
-catalog and lists it without entering the menu.
+`python tools/station_menu.py --list` shows the saved package catalog without
+searching or entering the menu.
 Discovery checks package framing and reads the embedded manifest; the runtime
 performs full package validation at launch.
 

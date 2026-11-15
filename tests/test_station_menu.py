@@ -1,5 +1,6 @@
 """Generic menu tests; no PLC source or station artifacts."""
 import json
+import io
 from pathlib import Path
 import struct
 import sys
@@ -13,6 +14,24 @@ import station_menu as menu
 
 
 class StationMenuTests(unittest.TestCase):
+    def test_saved_lists_do_not_search_or_drop_missing_packages(self):
+        settings = {'compiled_stations': [{'package': '/missing/generic.pkg', 'name': 'saved'}]}
+        with patch.object(menu, 'discover', side_effect=AssertionError('Unexpected search')):
+            self.assertEqual(menu.saved_packages(settings), [(Path('/missing/generic.pkg'), {'name': 'saved'})])
+            with patch('sys.stdout', new_callable=io.StringIO) as output:
+                menu.show(menu.saved_packages(settings))
+            self.assertIn('saved', output.getvalue())
+
+    def test_launch_subsection_with_empty_catalog_does_not_search(self):
+        with patch.object(menu, 'search_folder', return_value=Path('/missing/search-folder')), \
+                patch.object(menu, 'load_settings', return_value={}), \
+                patch.object(menu, 'refresh_catalog', side_effect=AssertionError('Unexpected search')), \
+                patch('sys.argv', ['station_menu.py']), \
+                patch('builtins.input', side_effect=['3', '0']), \
+                patch('sys.stdout', new_callable=io.StringIO) as output:
+            menu.main()
+        self.assertIn('В настройках нет скомпилированных станций', output.getvalue())
+
     def test_source_search_requires_nonempty_folders_and_accepts_alias(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

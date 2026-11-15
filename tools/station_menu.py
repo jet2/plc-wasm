@@ -56,25 +56,27 @@ def search_folder(override=None):
     return (path if path.is_absolute() else ROOT / path).resolve()
 
 
+def package_manifest(path):
+    with path.open('rb') as stream:
+        header = stream.read(12)
+        if len(header) != 12 or header[:4] != b'SWP1':
+            raise ValueError(f'Invalid package header: {path}')
+        length, module_size = struct.unpack('<II', header[4:])
+        if not 0 < length <= 1024 * 1024 or path.stat().st_size != 12 + length + module_size:
+            raise ValueError(f'Invalid package length: {path}')
+        manifest = json.loads(stream.read(length))
+        if not isinstance(manifest, dict):
+            raise ValueError(f'Invalid package manifest: {path}')
+        return manifest
+
+
 def discover(root):
     result = []
     for path in sorted(root.rglob('*')):
         if not path.is_file() or path.suffix.lower() != '.pkg':
             continue
         try:
-            with path.open('rb') as stream:
-                header = stream.read(12)
-                if len(header) != 12 or header[:4] != b'SWP1':
-                    continue
-                length, module_size = struct.unpack('<II', header[4:])
-                if not 0 < length <= 1024 * 1024:
-                    continue
-                if path.stat().st_size != 12 + length + module_size:
-                    continue
-                manifest = json.loads(stream.read(length))
-                if not isinstance(manifest, dict):
-                    continue
-            result.append((path.resolve(), manifest))
+            result.append((path.resolve(), package_manifest(path)))
         except (OSError, ValueError):
             continue
     return result
@@ -83,10 +85,14 @@ def discover(root):
 def show(stations):
     for number, (path, manifest) in enumerate(stations, 1):
         mapped = 'S7' if path.with_name('s7-map.json').is_file() else 'без карты S7'
+        try:
+            size = f'{path.stat().st_size / 1048576:.2f} МиБ'
+        except OSError:
+            size = 'файл недоступен'
         print(f'{number}) {path.parent.name} | {manifest.get("name", "?")} | '
-              f'{path.stat().st_size / 1048576:.2f} МиБ | {mapped}\n   {path}')
+              f'{size} | {mapped}\n   {path}')
     if not stations:
-        print('Пакеты станций не найдены.')
+        print('В настройках нет скомпилированных станций. Выполните поиск (пункт 1).')
 
 
 def source_directory(program):
@@ -111,6 +117,8 @@ def discover_sources(root):
 
 
 def refresh_catalog(root, config, include_sources=False):
+    if not root.is_dir():
+        raise ValueError(f'Папка поиска не найдена: {root}')
     settings = load_settings()
     # Keep valid packages found earlier in other folders, plus local build outputs.
     folders = {root.resolve(), (ROOT / 'build').resolve()}
@@ -149,15 +157,8 @@ def show_sources(settings):
 
 
 def saved_packages(settings):
-    result = []
-    for item in settings.get('compiled_stations', []):
-        package = Path(item['package'])
-        # Validate framing again: saved paths may have been removed or replaced.
-        match = next(((path, manifest) for path, manifest in discover(package.parent)
-                      if path == package), None) if package.is_file() else None
-        if match:
-            result.append(match)
-    return result
+    return [(Path(item['package']), {'name': item.get('name', '?')})
+            for item in settings.get('compiled_stations', [])]
 
 
 def compile_source(source, config):
@@ -435,19 +436,21 @@ def main():
         root = search_folder(args.root)
     except (OSError, ValueError) as error:
         parser.error(str(error))
-    if not root.is_dir():
-        parser.error(f'Папка не найдена: {root}')
     config = read_json(CONFIG) if CONFIG.exists() else {}
     if args.list:
-        show(saved_packages(refresh_catalog(root, config)))
+        show(saved_packages(load_settings()))
         return
     while True:
-        print(f'\nПапка поиска: {root}\n1) Найти и сохранить скомпилированные станции'
-              '\n2) Рекомпилировать сохранённую сборку\n3) Выбрать скомпилированную станцию для запуска'
-              '\n4) Остановить экземпляр станции\n5) Изменить папку поиска'
-              '\n6) Найти исходные / нескомпилированные станции'
-              '\n7) Выбрать исходную станцию для компиляции\n0) Выход')
         try:
+            settings = load_settings()
+            print(f'\nПапка поиска: {root}'
+                  f'\n\nСкомпилированные станции — сохранено: {len(settings.get("compiled_stations", []))}'
+                  '\n1) Найти и сохранить скомпилированные станции'
+                  '\n2) Рекомпилировать сохранённую сборку\n3) Выбрать станцию для запуска'
+                  f'\n\nИсходные станции — сохранено: {len(settings.get("source_stations", []))}'
+                  '\n6) Найти исходные / нескомпилированные станции'
+                  '\n7) Выбрать станцию для компиляции'
+                  '\n\nУправление\n4) Остановить экземпляр станции\n5) Изменить папку поиска\n0) Выход')
             choice = input('> ').strip()
             if choice == '0':
                 return
@@ -459,6 +462,7 @@ def main():
                 print('Списки сохранены; настройки перечитаны.')
                 continue
             if choice == '7':
+                print('\nИсходные станции из настроек:')
                 sources = show_sources(settings)
                 if sources:
                     selected = integer('Номер исходной станции (0 — отмена)', 0, 0, len(sources))
@@ -480,15 +484,17 @@ def main():
             if choice not in {'1', '2', '3'}:
                 print('Выберите пункт меню.')
                 continue
-            if choice == '1' or 'compiled_stations' not in settings:
+            if choice == '1':
                 settings = refresh_catalog(root, config)
             stations = saved_packages(settings)
+            print('\nСкомпилированные станции из настроек:')
             show(stations)
             if choice == '1' or not stations:
                 continue
             selected = integer('Номер станции (0 — отмена)', 0, 0, len(stations))
             if selected:
                 package, manifest = stations[selected - 1]
+                manifest = package_manifest(package)
                 if choice == '2':
                     rebuild(package, manifest, config)
                     refresh_catalog(root, config)
