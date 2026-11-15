@@ -14,6 +14,55 @@ import station_menu as menu
 
 
 class StationMenuTests(unittest.TestCase):
+    def test_batch_selection_ranges_all_and_invalid_input(self):
+        self.assertEqual(menu.batch_selection('1,3-5,3', 5), [0, 2, 3, 4])
+        self.assertEqual(menu.batch_selection('все', 3), [0, 1, 2])
+        self.assertEqual(menu.batch_selection('0', 3), [])
+        for text in ('0,1', '3-1', '4', '1,,2', '-1'):
+            with self.assertRaises(ValueError):
+                menu.batch_selection(text, 3)
+
+    def test_batch_delete_preflight_and_catalog_cleanup(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            (root / 'Station.mpr').touch()
+            packages = []
+            for number in (1, 2):
+                folder = root / 'wplc-build' / f'20260101-000000-00000{number}'
+                folder.mkdir(parents=True)
+                (folder / 'program.pkg').write_bytes(b'generic')
+                (folder / 'build.json').write_text('{}')
+                packages.append(folder / 'program.pkg')
+            with patch.object(menu, 'SETTINGS', root / 'menu-settings.json'), \
+                    patch.object(menu, 'CONFIG', root / 'config.json'), \
+                    patch.object(menu, 'running_stations', return_value=[]):
+                menu.save_settings({'compiled_stations': [dict(package=str(p)) for p in packages]})
+                menu.save_config({'sources': {str(p): 'generic' for p in packages}})
+                foreign = packages[1].with_name('keep.txt')
+                foreign.write_text('keep')
+                with self.assertRaises(ValueError):
+                    menu.delete_builds(packages)
+                self.assertTrue(all(p.exists() for p in packages))
+                foreign.unlink()
+                with patch.object(menu, 'running_stations', return_value=[dict(pid=123, command=f'wplc serve "{packages[1]}"')]):
+                    with self.assertRaises(ValueError):
+                        menu.delete_builds(packages)
+                self.assertTrue(all(p.exists() for p in packages))
+                menu.delete_builds(packages)
+                self.assertTrue(all(not p.parent.exists() for p in packages))
+                self.assertTrue((root / 'Station.mpr').exists())
+                self.assertEqual(menu.load_settings()['compiled_stations'], [])
+                self.assertEqual(menu.read_json(menu.CONFIG)['sources'], {})
+
+    def test_delete_menu_cancel_does_not_delete(self):
+        with patch.object(menu, 'load_settings', return_value={}), \
+                patch.object(menu, 'saved_packages', return_value=[(Path('/generic/program.pkg'), {'name': 'generic'})]), \
+                patch.object(menu, 'build_files'), patch.object(menu, 'show'), \
+                patch('builtins.input', side_effect=['1', 'нет']), \
+                patch.object(menu, 'delete_builds') as delete:
+            menu.delete_menu()
+        delete.assert_not_called()
+
     def test_build_output_is_beside_nearest_mpr(self):
         with tempfile.TemporaryDirectory() as temporary:
             station = Path(temporary).resolve()

@@ -5,6 +5,7 @@ from ctypes import wintypes
 from datetime import datetime
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import signal
@@ -463,6 +464,116 @@ def stop_menu():
         print(f'Экземпляр PID {record["pid"]} остановлен.')
 
 
+def build_files(package):
+    package = Path(package).absolute()
+    folder = package.parent
+    if package.name != 'program.pkg' or not re.fullmatch(r'\d{8}-\d{6}-\d{6}', folder.name):
+        raise ValueError('Удаление доступно только для сборок в отдельных папках с датой и временем.')
+    # Reject symlinks and junctions before resolving or deleting anything.
+    for path in (package, folder, *folder.parents):
+        if path.is_symlink() or (hasattr(path, 'is_junction') and path.is_junction()):
+            raise ValueError(f'Ссылка или junction в пути сборки: {path}')
+        if path.exists() and getattr(path.lstat(), 'st_file_attributes', 0) & 0x400:
+            raise ValueError(f'Reparse point в пути сборки: {path}')
+    folder = folder.resolve(strict=True)
+    local = any(folder.is_relative_to((ROOT / base).resolve())
+                for base in ('build/compiled', 'build/recompiled'))
+    station = (folder.parent.name == 'wplc-build'
+               and any(p.is_file() and p.suffix.lower() == '.mpr' for p in folder.parent.parent.iterdir()))
+    if not local and not station:
+        raise ValueError(f'Папка не является каталогом сборки: {folder}')
+    allowed = {'program.pkg', 'program.wat', 'manifest.json', 'build.json', 's7-map.json', 's7-map.json.tmp'}
+    files = list(folder.iterdir())
+    if not files or any(p.name not in allowed or not p.is_file() or p.is_symlink()
+                        or getattr(p.lstat(), 'st_file_attributes', 0) & 0x400 for p in files):
+        raise ValueError(f'В папке есть посторонние файлы или подпапки: {folder}')
+    return folder, files
+
+
+def batch_selection(text, count):
+    text = text.strip().lower()
+    if not text or text == '0':
+        return []
+    if text in {'all', 'все'}:
+        return list(range(count))
+    result = set()
+    for part in text.split(','):
+        match = re.fullmatch(r'\s*(\d+)(?:\s*-\s*(\d+))?\s*', part)
+        if not match:
+            raise ValueError('Введите номера через запятую или диапазоны, например 1,3-5.')
+        first, last = int(match[1]), int(match[2] or match[1])
+        if not 1 <= first <= last <= count:
+            raise ValueError('Номер сборки или диапазон вне списка.')
+        result.update(range(first - 1, last))
+    return sorted(result)
+
+
+def check_build_not_running(folder, processes):
+    paths = [str(folder)]
+    if folder.is_relative_to(ROOT):
+        paths.append(str(folder.relative_to(ROOT)))
+    for process in processes:
+        command = process['command'].replace('\\', '/').casefold()
+        if any(path.replace('\\', '/').casefold() + '/' in command for path in paths):
+            raise ValueError(f'Сборка используется процессом PID {process["pid"]}. Сначала остановите его.')
+
+
+def delete_builds(packages):
+    # Validate the whole selection before the first destructive action.
+    processes = running_stations()
+    for package in packages:
+        folder, _ = build_files(package)
+        check_build_not_running(folder, processes)
+    removed = set()
+    try:
+        for package in packages:
+            folder, files = build_files(package)
+            check_build_not_running(folder, running_stations())
+            for path in files:
+                path.unlink()
+            folder.rmdir()
+            removed.add(str(Path(package).resolve()))
+            print(f'Удалено: {folder}')
+    finally:
+        if removed:
+            settings = load_settings()
+            settings['compiled_stations'] = [item for item in settings.get('compiled_stations', [])
+                                             if str(Path(item['package']).resolve()) not in removed]
+            update_source_links(settings)
+            save_settings(settings)
+            if CONFIG.exists():
+                config = read_json(CONFIG)
+                config['sources'] = {path: source for path, source in config.get('sources', {}).items()
+                                     if str(Path(path).resolve()) not in removed}
+                save_config(config)
+
+
+def delete_menu():
+    candidates = []
+    for package, manifest in saved_packages(load_settings()):
+        try:
+            build_files(package)
+        except (OSError, ValueError):
+            continue
+        if package not in [path for path, _ in candidates]:
+            candidates.append((package, manifest))
+    if not candidates:
+        print('Нет сборок для удаления в отдельных папках с датой и временем.')
+        return
+    show(candidates)
+    selection = batch_selection(input('Удалить номера (1,3-5), все или 0 — отмена: '), len(candidates))
+    if not selection:
+        return
+    packages = [candidates[index][0] for index in selection]
+    print('Будут безвозвратно удалены папки сборок со всеми артефактами:')
+    for package in packages:
+        print(package.parent)
+    if input('Для подтверждения введите УДАЛИТЬ: ').strip().upper() != 'УДАЛИТЬ':
+        print('Удаление отменено.')
+        return
+    delete_builds(packages)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, help='override stations_folder from menu-settings.json for this run')
@@ -487,7 +598,8 @@ def main():
                   f'\n\nИсходные станции — сохранено: {len(settings.get("source_stations", []))}'
                   '\n6) Найти исходные / нескомпилированные станции'
                   '\n7) Выбрать станцию для компиляции'
-                  '\n\nУправление\n4) Остановить экземпляр станции\n5) Изменить папку поиска\n0) Выход')
+                  '\n\nУправление\n4) Остановить экземпляр станции\n5) Изменить папку поиска'
+                  '\n8) Удалить сборки пачкой\n0) Выход')
             choice = input('> ').strip()
             if choice == '0':
                 return
@@ -511,6 +623,9 @@ def main():
                 continue
             if choice == '4':
                 stop_menu()
+                continue
+            if choice == '8':
+                delete_menu()
                 continue
             if choice == '5':
                 candidate = Path(ask('Папка')).expanduser().resolve()

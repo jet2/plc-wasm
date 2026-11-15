@@ -167,3 +167,18 @@ stable process handle to avoid terminating a reused PID. Windows uses targeted
 process termination; Linux uses SIGTERM via pidfd (Python 3.9+ and a kernel with
 pidfd support). This stops execution and releases network sockets; it does not
 save PLC memory or execute a PLC shutdown scan. No other instance is stopped.
+
+Menu item 8 deletes multiple saved builds. Select numbers such as `1,3-5`,
+`все` / `all`, or `0` to cancel. The menu shows the exact directories and requires
+typing `УДАЛИТЬ` before deleting anything. Only separate timestamped build folders
+under station-local `wplc-build/` beside `.mpr`, or historical repository
+`build/compiled/` and `build/recompiled/`, are eligible. Folders with unexpected
+files, subdirectories, symlinks or Windows reparse points are rejected. Older
+fixed-location builds are excluded. All selected folders are checked before
+deletion; builds referenced by discovered running wplc instances are rejected.
+Do not launch a selected build concurrently with deletion.
+
+Deletion removes the known build artifacts and their now-empty folders; source
+projects and `.mpr` files are not deleted. Completed removals are removed from
+both local catalogs and source associations. If a later deletion fails, already
+completed removals remain deleted and are reported; the batch is not transactional.
