@@ -14,6 +14,11 @@ import station_menu as menu
 
 
 class StationMenuTests(unittest.TestCase):
+    def test_letter_key_selects_tenth_station_without_enter(self):
+        with patch.object(menu, 'menu_key', return_value='A') as read:
+            self.assertEqual(menu.menu_number('Станция', 10), 10)
+        self.assertIn('A', read.call_args.args[1])
+
     def test_gateway_launch_creates_local_settings_and_uses_gateway_command(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -25,7 +30,8 @@ class StationMenuTests(unittest.TestCase):
                     patch.object(menu, 'save_config'), patch.object(menu.shutil, 'copy2'), \
                     patch.object(menu.shutil, 'which', return_value='/terminal'), \
                     patch.object(menu.subprocess, 'Popen') as start, \
-                    patch('builtins.input', side_effect=['3', '']):
+                    patch.object(menu, 'menu_key', return_value='3'), \
+                    patch('builtins.input', side_effect=['']):
                 menu.launch(package, config)
             settings = root / '.local-validation/protocols.json'
             self.assertEqual(menu.read_json(settings)['modbus'], [])
@@ -166,12 +172,12 @@ class StationMenuTests(unittest.TestCase):
                     patch.object(menu, 'discover', return_value=[]) as search, \
                     patch('sys.argv', ['station_menu.py']), patch('sys.stdout', new_callable=io.StringIO):
                 menu.save_search_folder(first)
-                def choose(_):
+                def choose(*_):
                     if search.called:
                         return '0'
                     menu.save_search_folder(second)
                     return '1'
-                with patch('builtins.input', side_effect=choose):
+                with patch.object(menu, 'menu_key', side_effect=choose):
                     menu.main()
                 search.assert_called_once_with(second)
 
@@ -188,7 +194,7 @@ class StationMenuTests(unittest.TestCase):
                 patch.object(menu, 'load_settings', return_value={}), \
                 patch.object(menu, 'refresh_catalog', side_effect=AssertionError('Unexpected search')), \
                 patch('sys.argv', ['station_menu.py']), \
-                patch('builtins.input', side_effect=['3', '0']), \
+                patch.object(menu, 'menu_key', side_effect=['3', '0']), \
                 patch('sys.stdout', new_callable=io.StringIO) as output:
             menu.main()
         self.assertIn('В настройках нет скомпилированных станций', output.getvalue())
@@ -280,7 +286,7 @@ class StationMenuTests(unittest.TestCase):
 
     def test_stop_menu_cancel_does_not_signal(self):
         with patch.object(menu, 'running_stations', return_value=[dict(pid=123, command='generic')]), \
-                patch('builtins.input', return_value='0'), patch.object(menu, 'stop_station') as stop:
+                patch.object(menu, 'menu_key', return_value='0'), patch.object(menu, 'stop_station') as stop:
             menu.stop_menu()
             stop.assert_not_called()
 

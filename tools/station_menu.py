@@ -18,6 +18,43 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / '.local-validation' / 'station-menu.json'
 SETTINGS = Path(__file__).resolve().with_name('menu-settings.json')
+MENU_KEYS = '123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+
+
+def menu_key(label, allowed):
+    """Read one menu key immediately on a terminal; keep piped input usable."""
+    print(f'{label} ', end='', flush=True)
+    if not sys.stdin.isatty():
+        return input().strip().upper()
+    if os.name == 'nt':
+        import msvcrt
+        def read():
+            return msvcrt.getwch()
+    else:
+        import termios
+        import tty
+        def read():
+            fd = sys.stdin.fileno()
+            old = termios.tcgetattr(fd)
+            try:
+                tty.setraw(fd)
+                return sys.stdin.read(1)
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old)
+    while True:
+        char = read().upper()
+        if char == '\x03':
+            raise KeyboardInterrupt
+        if char in allowed:
+            print(char)
+            return char
+
+
+def menu_number(label, count):
+    if count > len(MENU_KEYS):
+        return integer(label, 0, 0, count)
+    key = menu_key(f'{label} (0 — отмена):', '0' + MENU_KEYS[:count])
+    return 0 if key == '0' else MENU_KEYS.index(key) + 1
 
 
 def read_json(path):
@@ -97,7 +134,8 @@ def show(stations):
             size = f'{path.stat().st_size / 1048576:.2f} МиБ'
         except OSError:
             size = 'файл недоступен'
-        print(f'{number}) {path.parent.name} | {manifest.get("name", "?")} | '
+        key = MENU_KEYS[number - 1] if number <= len(MENU_KEYS) else str(number)
+        print(f'{key}) {path.parent.name} | {manifest.get("name", "?")} | '
               f'{size} | {mapped}\n   {path}')
     if not stations:
         print('В настройках нет скомпилированных станций. Выполните поиск (пункт 1).')
@@ -177,7 +215,8 @@ def show_sources(settings):
     stations = settings.get('source_stations', [])
     for index, source in enumerate(stations, 1):
         status = 'есть сборка' if source.get('compiled') else 'не скомпилирована'
-        print(f'{index}) {source["name"]} | {status}\n   {source["program"]}')
+        key = MENU_KEYS[index - 1] if index <= len(MENU_KEYS) else str(index)
+        print(f'{key}) {source["name"]} | {status}\n   {source["program"]}')
     if not stations:
         print('Исходные станции не найдены. Выполните поиск (пункт 6).')
     return stations
@@ -305,7 +344,7 @@ def launch(package, config, mode=None):
     mapping = package.with_name('s7-map.json')
     if not mapping.is_file():
         raise ValueError('Для запуска с циклом и S7 нужна карта s7-map.json. Пересоберите пакет с --s7-map.')
-    mode = mode or ask('Режим: 1 — Snap7, 2 — офлайн монитор, 3 — Станция — OPC UA / Modbus / S7', '1')
+    mode = mode or menu_key('Режим: 1 — Snap7, 2 — офлайн монитор, 3 — Станция — OPC UA / Modbus / S7:', '123')
     period = integer('Период цикла, мс', 100, 1, 60000) if mode != '3' else 100
     command = [str(runtime), 'monitor', str(package), str(mapping), str(period), '0']
     if mode == '1':
@@ -482,9 +521,10 @@ def stop_menu():
         print('Работающих экземпляров wplc в build/live не найдено.')
         return
     for index, record in enumerate(stations, 1):
-        print(f'{index}) PID {record["pid"]}\n   {record["command"]}')
+        key = MENU_KEYS[index - 1] if index <= len(MENU_KEYS) else str(index)
+        print(f'{key}) PID {record["pid"]}\n   {record["command"]}')
     print('Остановка завершит процесс; состояние PLC в памяти будет потеряно.')
-    selected = integer('Номер экземпляра для остановки (0 — отмена)', 0, 0, len(stations))
+    selected = menu_number('Экземпляр для остановки', len(stations))
     if selected:
         record = stations[selected - 1]
         stop_station(record)
@@ -664,8 +704,8 @@ def main():
                   '\n7) Выбрать станцию для компиляции'
                   '\n\nУправление\n4) Остановить экземпляр станции\n5) Изменить папку поиска'
                   '\n8) Удалить сборки пачкой\n9) Запустить эмулятор станции'
-                  '\n10) Запустить станцию + эмулятор\n0) Выход')
-            choice = input('> ').strip()
+                  '\nA) Запустить станцию + эмулятор\n0) Выход')
+            choice = menu_key('>','0123456789A')
             if choice == '0':
                 return
             settings = load_settings()
@@ -683,7 +723,7 @@ def main():
                 print('\nИсходные станции из настроек:')
                 sources = show_sources(settings)
                 if sources:
-                    selected = integer('Номер исходной станции (0 — отмена)', 0, 0, len(sources))
+                    selected = menu_number('Исходная станция', len(sources))
                     if selected:
                         compile_source(sources[selected - 1], config)
                         settings = load_settings()
@@ -703,7 +743,7 @@ def main():
                 args.root = None
                 root = candidate
                 continue
-            if choice not in {'1', '2', '3', '10'}:
+            if choice not in {'1', '2', '3', 'A'}:
                 print('Выберите пункт меню.')
                 continue
             if choice == '1':
@@ -713,13 +753,13 @@ def main():
             show(stations)
             if choice == '1' or not stations:
                 continue
-            selected = integer('Номер станции (0 — отмена)', 0, 0, len(stations))
+            selected = menu_number('Станция', len(stations))
             if selected:
                 package, manifest = stations[selected - 1]
                 manifest = package_manifest(package)
                 if choice == '2':
                     rebuild(package, manifest, config)
-                elif choice == '10':
+                elif choice == 'A':
                     command = emulator_command(config, package)
                     launch(package, config, mode='3')
                     start_emulator(command, config)
