@@ -14,6 +14,26 @@ import station_menu as menu
 
 
 class StationMenuTests(unittest.TestCase):
+    def test_search_uses_only_configured_tree_and_rereads_settings(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            first, second = root / 'first', root / 'second'
+            first.mkdir()
+            second.mkdir()
+            with patch.object(menu, 'ROOT', root), patch.object(menu, 'SETTINGS', root / 'settings.json'), \
+                    patch.object(menu, 'CONFIG', root / 'config.json'), \
+                    patch.object(menu, 'discover', return_value=[]) as search, \
+                    patch('sys.argv', ['station_menu.py']), patch('sys.stdout', new_callable=io.StringIO):
+                menu.save_search_folder(first)
+                def choose(_):
+                    if search.called:
+                        return '0'
+                    menu.save_search_folder(second)
+                    return '1'
+                with patch('builtins.input', side_effect=choose):
+                    menu.main()
+                search.assert_called_once_with(second)
+
     def test_saved_lists_do_not_search_or_drop_missing_packages(self):
         settings = {'compiled_stations': [{'package': '/missing/generic.pkg', 'name': 'saved'}]}
         with patch.object(menu, 'discover', side_effect=AssertionError('Unexpected search')):
@@ -130,10 +150,13 @@ class StationMenuTests(unittest.TestCase):
             data = b'SWP1' + struct.pack('<II', len(manifest), 8) + manifest + b'\0asm\x01\0\0\0'
             valid = folder / 'valid.PKG'
             valid.write_bytes(data)
+            direct = root / 'top.pkg'
+            direct.write_bytes(data)
             (root / 'truncated.pkg').write_bytes(data[:-1])
             (root / 'trailing.pkg').write_bytes(data + b'x')
             (root / 'other.pkg').write_bytes(b'other format')
-            self.assertEqual(discover(root), [(valid.resolve(), {'name': 'generic'})])
+            self.assertEqual(discover(root), [(valid.resolve(), {'name': 'generic'}),
+                                              (direct.resolve(), {'name': 'generic'})])
 
     def test_rebuild_preserves_options_and_handles_paths_with_spaces(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -116,8 +116,12 @@ Settings are reloaded each time. Missing packages remain visible as unavailable;
 the selected package is checked before launch or rebuild. An empty catalog
 prompts the user to run an explicit search.
 
-Item 1 refreshes and saves the package catalog. The search includes the selected
-folder, local `build/` and previously cataloged package folders. Items 2 and 3
+Item 1 refreshes and saves the package catalog. Recursive search checks files
+directly in `stations_folder` and all its subfolders. The menu rereads this path
+before searching, so edits to settings take effect without restarting. Existing
+registered builds outside that tree are retained by checking their exact files;
+their containing folders and local `build/` are not automatically searched.
+Items 2 and 3
 select saved packages for rebuilding and launching. An explicit search removes
 missing or malformed files from the catalog. Source projects are marked as compiled only when a known local
 source-to-package association exists. This indicates an available build, not

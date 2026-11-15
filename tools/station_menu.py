@@ -120,13 +120,20 @@ def refresh_catalog(root, config, include_sources=False):
     if not root.is_dir():
         raise ValueError(f'Папка поиска не найдена: {root}')
     settings = load_settings()
-    # Keep valid packages found earlier in other folders, plus local build outputs.
-    folders = {root.resolve(), (ROOT / 'build').resolve()}
-    folders.update(Path(item['package']).parent for item in settings.get('compiled_stations', []))
-    packages = {}
-    for folder in sorted(folders):
-        if folder.is_dir():
-            packages.update(discover(folder))
+    # Recursively search only the configured folder, including its own files.
+    packages = dict(discover(root))
+    # Preserve explicitly registered builds outside the search tree by checking
+    # their exact files, without recursively scanning unrelated directories.
+    known = {item['package'] for item in settings.get('compiled_stations', [])}
+    known.update(config.get('sources', {}))
+    for filename in sorted(known):
+        package = Path(filename).resolve()
+        if package.is_relative_to(root.resolve()):
+            continue
+        try:
+            packages[package] = package_manifest(package)
+        except (OSError, ValueError):
+            continue
     associations = {item['package']: item.get('program')
                     for item in settings.get('compiled_stations', [])}
     associations.update(config.get('sources', {}))
@@ -442,6 +449,7 @@ def main():
         return
     while True:
         try:
+            root = search_folder(args.root)
             settings = load_settings()
             print(f'\nПапка поиска: {root}'
                   f'\n\nСкомпилированные станции — сохранено: {len(settings.get("compiled_stations", []))}'
@@ -456,6 +464,7 @@ def main():
                 return
             settings = load_settings()
             config = read_json(CONFIG) if CONFIG.exists() else {}
+            root = search_folder(args.root)
             if choice == '6':
                 settings = refresh_catalog(root, config, include_sources=True)
                 show_sources(settings)
@@ -479,6 +488,7 @@ def main():
                 if not candidate.is_dir():
                     raise ValueError('Папка не найдена.')
                 save_search_folder(candidate)
+                args.root = None
                 root = candidate
                 continue
             if choice not in {'1', '2', '3'}:
