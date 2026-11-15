@@ -4,6 +4,8 @@
 __pycache__/
 /.local-validation/
 /.publish-sources.json
+/settings.json
+/settings.json.tmp
 /reports/
 /examples/
 *.scl

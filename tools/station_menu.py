@@ -15,10 +15,36 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / '.local-validation' / 'station-menu.json'
+SETTINGS = ROOT / 'settings.json'
 
 
 def read_json(path):
-    return json.loads(path.read_text(encoding='utf-8'))
+    return json.loads(path.read_text(encoding='utf-8-sig'))
+
+
+def save_search_folder(root):
+    settings = read_json(SETTINGS) if SETTINGS.exists() else {}
+    if not isinstance(settings, dict):
+        raise ValueError('settings.json должен содержать JSON-объект.')
+    settings['stations_folder'] = str(root.resolve())
+    temporary = SETTINGS.with_suffix('.json.tmp')
+    temporary.write_text(json.dumps(settings, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    temporary.replace(SETTINGS)
+
+
+def search_folder(override=None):
+    if override is not None:
+        return override.expanduser().resolve()
+    if not SETTINGS.exists():
+        save_search_folder(ROOT / 'build')
+    settings = read_json(SETTINGS)
+    if not isinstance(settings, dict):
+        raise ValueError('settings.json должен содержать JSON-объект.')
+    value = settings.get('stations_folder')
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError('В settings.json требуется строка stations_folder с путём к папке.')
+    path = Path(value).expanduser()
+    return (path if path.is_absolute() else ROOT / path).resolve()
 
 
 def discover(root):
@@ -288,10 +314,13 @@ def stop_menu():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--root', type=Path, default=ROOT / 'build', help='recursive package search directory')
+    parser.add_argument('--root', type=Path, help='override stations_folder from settings.json for this run')
     parser.add_argument('--list', action='store_true', help='list packages and exit')
     args = parser.parse_args()
-    root = args.root.expanduser().resolve()
+    try:
+        root = search_folder(args.root)
+    except (OSError, ValueError) as error:
+        parser.error(str(error))
     if not root.is_dir():
         parser.error(f'Папка не найдена: {root}')
     if args.list:
@@ -313,6 +342,7 @@ def main():
                 candidate = Path(ask('Папка')).expanduser().resolve()
                 if not candidate.is_dir():
                     raise ValueError('Папка не найдена.')
+                save_search_folder(candidate)
                 root = candidate
                 continue
             if choice not in {'1', '2', '3'}:

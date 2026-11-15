@@ -93,7 +93,12 @@ Do not copy projects into tracked paths to make tests or CI self-contained.
 
 Run `python tools/station_menu.py` for the Russian-language interactive menu:
 recursive package discovery, station rebuild and visible wplc launch. The default
-search folder is `build/`; use `--root PATH` or menu item 5 to change it.
+search folder is stored as `stations_folder` in local `settings.json` at the
+repository root. On first launch the menu creates it with the absolute path to
+`build/`. Relative paths in this file are resolved against the repository root.
+Menu item 5 saves the selected folder for subsequent launches. `--root PATH`
+overrides it for one run without changing the file. `settings.json` is ignored
+by Git, so machine-specific paths remain local.
 `python tools/station_menu.py --list --root PATH` only lists packages.
 Discovery checks package framing and reads the embedded manifest; the runtime
 performs full package validation at launch.

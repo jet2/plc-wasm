@@ -13,6 +13,19 @@ import station_menu as menu
 
 
 class StationMenuTests(unittest.TestCase):
+    def test_settings_persist_folder_and_override_is_temporary(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            with patch.object(menu, 'ROOT', root), patch.object(menu, 'SETTINGS', root / 'settings.json'):
+                self.assertEqual(menu.search_folder(), root / 'build')
+                menu.SETTINGS.write_text(json.dumps({'stations_folder': 'nested', 'other': True}), encoding='utf-8-sig')
+                self.assertEqual(menu.search_folder(), root / 'nested')
+                self.assertEqual(menu.search_folder(root / 'override'), root / 'override')
+                self.assertEqual(menu.search_folder(), root / 'nested')
+                menu.save_search_folder(root / 'saved')
+                self.assertEqual(menu.search_folder(), root / 'saved')
+                self.assertTrue(menu.read_json(menu.SETTINGS)['other'])
+
     def test_stop_refuses_unmanaged_executable(self):
         with patch.object(menu, 'windows_process') as opener:
             with self.assertRaises(ValueError):
