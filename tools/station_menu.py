@@ -299,8 +299,8 @@ def launch(package, config):
     mapping = package.with_name('s7-map.json')
     if not mapping.is_file():
         raise ValueError('Для запуска с циклом и S7 нужна карта s7-map.json. Пересоберите пакет с --s7-map.')
-    mode = ask('Режим: 1 — Snap7, 2 — офлайн монитор', '1')
-    period = integer('Период цикла, мс', 100, 1, 2147483647)
+    mode = ask('Режим: 1 — Snap7, 2 — офлайн монитор, 3 — OPC UA / Modbus / Snap7', '1')
+    period = integer('Период цикла, мс', 100, 1, 60000) if mode != '3' else 100
     command = [str(runtime), 'monitor', str(package), str(mapping), str(period), '0']
     if mode == '1':
         default = ROOT / '.local-validation/vendor/snap7/build/bin/win64/snap7.dll'
@@ -312,6 +312,20 @@ def launch(package, config):
             reservation.bind(('127.0.0.1', port))
         config['snap7'] = str(library)
         command = [str(runtime), 'serve', str(package), str(mapping), str(library), str(port), str(period), '0']
+    elif mode == '3':
+        default = ROOT / '.local-validation' / 'protocols.json'
+        settings = Path(ask('JSON настроек протоколов', config.get('protocols', str(default)))).expanduser().resolve()
+        if not settings.exists():
+            settings.parent.mkdir(parents=True, exist_ok=True)
+            settings.write_text(json.dumps({
+                'period_ms': 100,
+                'opcua': {'port': 4840, 'pki_dir': str(ROOT / '.local-validation/pki'), 'tags': []},
+                'snap7': None,
+                'modbus': [],
+            }, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+            print(f'Созданы настройки OPC UA: {settings}. Modbus-устройства и Snap7 добавляются в этот JSON.')
+        config['protocols'] = str(settings)
+        command = [str(runtime), 'gateway', str(package), str(mapping), str(settings), '0']
     elif mode != '2':
         raise ValueError('Неизвестный режим.')
     save_config(config)

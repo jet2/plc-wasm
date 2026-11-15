@@ -14,6 +14,28 @@ import station_menu as menu
 
 
 class StationMenuTests(unittest.TestCase):
+    def test_gateway_launch_creates_local_settings_and_uses_gateway_command(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            package = root / 'program.pkg'
+            package.with_name('s7-map.json').touch()
+            runtime = root / 'runtime.exe'
+            config = {}
+            with patch.object(menu, 'ROOT', root), patch.object(menu, 'runtime_path', return_value=runtime), \
+                    patch.object(menu, 'save_config'), patch.object(menu.shutil, 'copy2'), \
+                    patch.object(menu.shutil, 'which', return_value='/terminal'), \
+                    patch.object(menu.subprocess, 'Popen') as start, \
+                    patch('builtins.input', side_effect=['3', '']):
+                menu.launch(package, config)
+            settings = root / '.local-validation/protocols.json'
+            self.assertEqual(menu.read_json(settings)['modbus'], [])
+            self.assertEqual(menu.read_json(settings)['opcua']['port'], 4840)
+            self.assertEqual(config['protocols'], str(settings.resolve()))
+            command = start.call_args.args[0]
+            # A Linux terminal emulator may prefix the command.
+            gateway = command.index('gateway')
+            self.assertEqual(command[gateway + 1:], [str(package), str(package.with_name('s7-map.json')), str(settings.resolve()), '0'])
+
     def test_batch_selection_ranges_all_and_invalid_input(self):
         self.assertEqual(menu.batch_selection('1,3-5,3', 5), [0, 2, 3, 4])
         self.assertEqual(menu.batch_selection('все', 3), [0, 1, 2])

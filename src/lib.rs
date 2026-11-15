@@ -1,6 +1,9 @@
-//! Experimental ABI v1 with host-owned S7 adapters. No field-device I/O yet.
+//! Experimental ABI v1 with host-owned protocol adapters.
+pub mod gateway;
+pub mod modbus;
 pub mod s7;
 pub mod snap7;
+pub mod ua;
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

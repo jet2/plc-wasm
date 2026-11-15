@@ -26,6 +26,8 @@ PUBLIC_PATHS = frozenset({
     "src/snap7.rs", "tests/snap7.rs", "SNAP7.md",
     "tools/station_menu.py", "tests/test_station_menu.py",
     "tools/menu-settings.json",
+    "src/gateway.rs", "src/modbus.rs", "src/ua.rs", "tests/protocols.rs",
+    "tests/protocol_network.py", "PROTOCOLS.md",
 })
 MAX_BLOB = 2 * 1024 * 1024
 WINDOW = 16

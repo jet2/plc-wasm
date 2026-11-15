@@ -240,6 +240,7 @@ pub struct Bridge {
     faulted: bool,
     generation: u64,
     names: HashMap<String, Option<(usize, usize)>>,
+    device_pending: BTreeMap<u32, Vec<u8>>,
 }
 
 impl Bridge {
@@ -271,6 +272,7 @@ impl Bridge {
             faulted: false,
             generation: 0,
             names,
+            device_pending: BTreeMap::new(),
         })
     }
     pub fn map(&self) -> &Map {
@@ -291,7 +293,7 @@ impl Bridge {
         ensure!(bit < 8, "invalid bit");
         Ok(self.read_db(db, byte, 1)?[0] & (1 << bit) != 0)
     }
-    fn named(&self, name: &str) -> Result<(u16, Field)> {
+    pub fn named(&self, name: &str) -> Result<(u16, Field)> {
         let &(block_index, field_index) = self
             .names
             .get(&name.to_ascii_uppercase())
@@ -386,6 +388,34 @@ impl Bridge {
     }
     pub fn discard_pending(&mut self) {
         self.pending.clear();
+        self.device_pending.clear();
+    }
+    /// Explicitly configured field inputs, independent of HMI write permissions.
+    /// A failed batch changes nothing. Device input patches take priority over HMI writes.
+    pub fn queue_device_inputs(&mut self, values: &[(String, Vec<u8>)]) -> Result<()> {
+        ensure!(!self.is_faulted(), "bridge is faulted");
+        let mut patches = BTreeMap::new();
+        for (name, value) in values {
+            let (db, field) = self.named(name)?;
+            ensure!(value.len() == field.bytes(), "wrong device field size");
+            let mut snapshot = self.published[&db].clone();
+            let byte = field.bit as usize / 8;
+            if field.kind == Kind::Bool {
+                ensure!(value[0] <= 1, "invalid device BOOL");
+                let mask = 1 << (field.bit % 8);
+                snapshot[byte] = (snapshot[byte] & !mask) | (value[0] << (field.bit % 8));
+            } else {
+                snapshot[byte..byte + value.len()].copy_from_slice(value);
+            }
+            ensure!(
+                patches
+                    .insert(field.offset, field.decode(&snapshot)?)
+                    .is_none(),
+                "duplicate device target"
+            );
+        }
+        self.device_pending.extend(patches);
+        Ok(())
     }
     pub fn cycle(&mut self, inputs: &[u8], elapsed_ms: u32) -> Result<()> {
         ensure!(!self.is_faulted(), "bridge is faulted; reload required");
@@ -410,8 +440,14 @@ impl Bridge {
                 }
             }
         }
+        patches.extend(
+            self.device_pending
+                .iter()
+                .map(|(offset, value)| (*offset, value.clone())),
+        );
         self.runtime.patch_state(&patches)?;
         self.pending.clear();
+        self.device_pending.clear();
         if let Err(error) = self.runtime.cycle(inputs, elapsed_ms) {
             self.faulted = true;
             return Err(error);

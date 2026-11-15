@@ -54,6 +54,25 @@ enum S7Action {
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     match args.get(1).map(String::as_str) {
+        Some("gateway") if (5..=6).contains(&args.len()) => {
+            let runtime = Runtime::load(Package::decode(&bounded_read(&args[2])?)?)?;
+            let inputs = vec![0; runtime.manifest.inputs.size as usize];
+            let map: Map =
+                serde_json::from_slice(&bounded_read_limit(&args[3], 64 * 1024 * 1024)?)?;
+            let config: station_runtime::gateway::Config =
+                serde_json::from_slice(&bounded_read_limit(&args[4], 1024 * 1024)?)?;
+            let cycles = args.get(5).map(|s| s.parse()).transpose()?.unwrap_or(0);
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()?
+                .block_on(station_runtime::gateway::run(
+                    Bridge::new(runtime, map)?,
+                    inputs,
+                    config,
+                    cycles,
+                ))?;
+        }
         Some("serve") if (5..=8).contains(&args.len()) => {
             let port: u16 = args.get(5).map(|s| s.parse()).transpose()?.unwrap_or(1102);
             let period_ms: u32 = args.get(6).map(|s| s.parse()).transpose()?.unwrap_or(100);
@@ -258,7 +277,7 @@ fn main() -> Result<()> {
             );
         }
         _ => bail!(
-            "Usage: station-runtime pack MANIFEST.json MODULE.wat OUTPUT.pkg\n       station-runtime run PROGRAM.pkg [CYCLES]\n       station-runtime s7-run PROGRAM.pkg MAP.json ACTIONS.json\n       station-runtime monitor PROGRAM.pkg MAP.json [PERIOD_MS] [CYCLES]\n       station-runtime serve PROGRAM.pkg MAP.json SNAP7_LIBRARY [PORT] [PERIOD_MS] [CYCLES]\nDefaults: loopback port 1102, 100 ms, unlimited cycles (0). No Modbus driver."
+            "Usage: station-runtime pack MANIFEST.json MODULE.wat OUTPUT.pkg\n       station-runtime run PROGRAM.pkg [CYCLES]\n       station-runtime s7-run PROGRAM.pkg MAP.json ACTIONS.json\n       station-runtime monitor PROGRAM.pkg MAP.json [PERIOD_MS] [CYCLES]\n       station-runtime serve PROGRAM.pkg MAP.json SNAP7_LIBRARY [PORT] [PERIOD_MS] [CYCLES]\n       station-runtime gateway PROGRAM.pkg MAP.json PROTOCOLS.json [CYCLES]\nServe defaults: loopback port 1102, 100 ms, unlimited cycles (0). Gateway adapters use JSON settings."
         ),
     }
     Ok(())

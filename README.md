@@ -78,7 +78,10 @@ The `serve` command exposes mapped DBs on a separate loopback test port through
 a dynamically loaded native Snap7 library. See [SNAP7.md](SNAP7.md) for setup,
 the supported data access contract and CPU/system-service limitations.
 
-Remaining work includes Modbus master, live WinCC commissioning,
+OPC UA and Modbus TCP master can run concurrently with Snap7 using `gateway`.
+See [PROTOCOLS.md](PROTOCOLS.md) for JSON settings, mappings, access policy and tests.
+
+Remaining work includes extended live WinCC commissioning,
 scheduling/device fault policies and comparison against the reference PLC.
 S7 status flags, general library/system functions and whole aggregate assignment
 remain unsupported. String overflow and non-finite REAL results trap deliberately.
