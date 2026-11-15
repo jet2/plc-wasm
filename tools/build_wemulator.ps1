@@ -1,6 +1,8 @@
 # Build the actual GUI, with cached dependencies and LLVM's MSVC-compatible linker.
 param([string]$Project = (Join-Path (Split-Path $PSScriptRoot -Parent) '../WEmulator'))
 $ErrorActionPreference = 'Stop'
+python (Join-Path $Project 'tools/prepare_makepad.py')
+if ($LASTEXITCODE -ne 0) { throw 'Makepad preparation failed' }
 $root = Split-Path $PSScriptRoot -Parent
 $env:CARGO_HOME = Join-Path $root '.toolchain/cargo'
 $env:RUSTUP_HOME = Join-Path $root '.toolchain/rustup'
@@ -13,4 +15,6 @@ Copy-Item -LiteralPath $source -Destination $linker -Force
 # Only the GUI receives this option, avoiding invalidation of all dependency artifacts.
 $cargoArgs = @('rustc', '--release', '--locked', '--manifest-path', (Join-Path $Project 'Cargo.toml'), '-p', 'wemulator', '-j', '2', '--', '-C', "linker=$linker")
 & (Join-Path $root 'cargo-local.ps1') @cargoArgs
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+python (Join-Path $Project 'tools/package_makepad.py')
 exit $LASTEXITCODE
