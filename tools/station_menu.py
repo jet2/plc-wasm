@@ -305,7 +305,7 @@ def launch(package, config, mode=None):
     mapping = package.with_name('s7-map.json')
     if not mapping.is_file():
         raise ValueError('Для запуска с циклом и S7 нужна карта s7-map.json. Пересоберите пакет с --s7-map.')
-    mode = mode or ask('Режим: 1 — Snap7, 2 — офлайн монитор, 3 — OPC UA / Modbus / Snap7', '1')
+    mode = mode or ask('Режим: 1 — Snap7, 2 — офлайн монитор, 3 — Станция — OPC UA / Modbus / S7', '1')
     period = integer('Период цикла, мс', 100, 1, 60000) if mode != '3' else 100
     command = [str(runtime), 'monitor', str(package), str(mapping), str(period), '0']
     if mode == '1':
