@@ -14,6 +14,13 @@ import station_menu as menu
 
 
 class StationMenuTests(unittest.TestCase):
+    def test_occupied_port_is_reported_before_launch(self):
+        import socket
+        with socket.socket() as listener:
+            listener.bind(('127.0.0.1', 0))
+            with self.assertRaisesRegex(ValueError, 'порт .* занят'):
+                menu.require_free_local_port(listener.getsockname()[1], 'OPC UA')
+
     def test_letter_key_selects_tenth_station_without_enter(self):
         with patch.object(menu, 'menu_key', return_value='A') as read:
             self.assertEqual(menu.menu_number('Станция', 10), 10)
@@ -28,10 +35,13 @@ class StationMenuTests(unittest.TestCase):
             config = {}
             with patch.object(menu, 'ROOT', root), patch.object(menu, 'runtime_path', return_value=runtime), \
                     patch.object(menu, 'save_config'), patch.object(menu.shutil, 'copy2'), \
+                    patch.object(menu, 'require_free_local_port'), \
+                    patch.object(menu.time, 'sleep'), \
                     patch.object(menu.shutil, 'which', return_value='/terminal'), \
                     patch.object(menu.subprocess, 'Popen') as start, \
                     patch.object(menu, 'menu_key', return_value='3'), \
                     patch('builtins.input', side_effect=['']):
+                start.return_value.poll.return_value = None
                 menu.launch(package, config)
             settings = root / '.local-validation/protocols.json'
             self.assertEqual(menu.read_json(settings)['modbus'], [])

@@ -14,6 +14,7 @@ import struct
 import stat
 import subprocess
 import sys
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / '.local-validation' / 'station-menu.json'
@@ -55,6 +56,15 @@ def menu_number(label, count):
         return integer(label, 0, 0, count)
     key = menu_key(f'{label} (0 — отмена):', '0' + MENU_KEYS[:count])
     return 0 if key == '0' else MENU_KEYS.index(key) + 1
+
+
+def require_free_local_port(port, protocol):
+    with socket.socket() as reservation:
+        try:
+            reservation.bind(('127.0.0.1', port))
+        except OSError as error:
+            raise ValueError(f'{protocol}: порт 127.0.0.1:{port} занят; '
+                             'остановите прежний экземпляр или укажите другой порт.') from error
 
 
 def read_json(path):
@@ -353,8 +363,7 @@ def launch(package, config, mode=None):
         if not library.is_file():
             raise ValueError(f'Библиотека не найдена: {library}')
         port = integer('Порт S7 на 127.0.0.1', 102, 1, 65535)
-        with socket.socket() as reservation:
-            reservation.bind(('127.0.0.1', port))
+        require_free_local_port(port, 'Snap7')
         config['snap7'] = str(library)
         command = [str(runtime), 'serve', str(package), str(mapping), str(library), str(port), str(period), '0']
     elif mode == '3':
@@ -372,6 +381,11 @@ def launch(package, config, mode=None):
             }, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
             print(f'Созданы настройки OPC UA: {settings}. Modbus-устройства и Snap7 добавляются в этот JSON.')
         config['protocols'] = str(settings)
+        adapters = read_json(settings)
+        for protocol, key in (('OPC UA', 'opcua'), ('Snap7', 'snap7')):
+            adapter = adapters.get(key)
+            if isinstance(adapter, dict) and isinstance(adapter.get('port'), int):
+                require_free_local_port(adapter['port'], protocol)
         command = [str(runtime), 'gateway', str(package), str(mapping), str(settings), '0']
     elif mode != '2':
         raise ValueError('Неизвестный режим.')
@@ -389,6 +403,11 @@ def launch(package, config, mode=None):
         process = subprocess.Popen(command, cwd=ROOT,
                                    creationflags=subprocess.CREATE_NEW_CONSOLE,
                                    startupinfo=startup)
+        time.sleep(0.5)
+        exit_code = process.poll()
+        if exit_code is not None:
+            raise RuntimeError(f'WPLC завершился сразу после запуска (код {exit_code}). '
+                               'Проверьте настройки станции и занятость портов.')
     elif shutil.which('x-terminal-emulator'):
         process = subprocess.Popen(['x-terminal-emulator', '-e', *command], cwd=ROOT)
     elif shutil.which('gnome-terminal'):
@@ -765,7 +784,7 @@ def main():
                     start_emulator(command, config)
                 else:
                     launch(package, config)
-        except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
+        except (OSError, ValueError, RuntimeError, KeyError, subprocess.SubprocessError) as error:
             print(f'Ошибка: {error}')
         except KeyboardInterrupt:
             print('\nДействие прервано.')
