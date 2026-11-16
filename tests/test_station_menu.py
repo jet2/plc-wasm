@@ -14,6 +14,52 @@ import station_menu as menu
 
 
 class StationMenuTests(unittest.TestCase):
+    def test_promotion_keeps_current_and_previous(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'wplc-build'
+            root.mkdir()
+            with patch.object(menu, 'package_manifest', return_value={'name': 'station'}), \
+                    patch.object(menu, 'running_stations', return_value=[]):
+                for number in range(3):
+                    staging = root / f'.staging-{number}'
+                    staging.mkdir()
+                    (staging / 'program.pkg').write_text(str(number))
+                    (staging / 's7-map.json').write_text('{}')
+                    menu.promote_build(staging)
+                self.assertEqual((root / 'current/program.pkg').read_text(), '2')
+                self.assertEqual((root / 'previous/program.pkg').read_text(), '1')
+                self.assertEqual(sorted(path.name for path in root.iterdir()), ['current', 'previous'])
+
+    def test_current_wins_over_previous_even_with_older_file_timestamp(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'wplc-build'
+            current, previous = root / 'current/program.pkg', root / 'previous/program.pkg'
+            current.parent.mkdir(parents=True)
+            previous.parent.mkdir(parents=True)
+            current.touch()
+            previous.touch()
+            settings = {'compiled_stations': [
+                {'package': str(previous), 'program': 'same-source', 'name': 'station'},
+                {'package': str(current), 'program': 'same-source', 'name': 'station'}]}
+            self.assertEqual(menu.saved_packages(settings)[0][0], current)
+            self.assertEqual(menu.latest_package(previous, settings), current)
+
+    def test_stale_catalog_resolves_newer_build_on_disk(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'wplc-build'
+            old = root / 'old/program.pkg'
+            new = root / 'new/program.pkg'
+            for package in (old, new):
+                package.parent.mkdir(parents=True)
+                package.touch()
+                package.with_name('s7-map.json').touch()
+            import os
+            os.utime(old, ns=(1_000_000_000, 1_000_000_000))
+            os.utime(new, ns=(2_000_000_000, 2_000_000_000))
+            settings = {'compiled_stations': [dict(package=str(old), program='same-source', name='station')]}
+            self.assertEqual(menu.latest_package(old, settings), new)
+            self.assertEqual(menu.saved_packages(settings)[0][0], new)
+
     def test_occupied_port_is_reported_before_launch(self):
         import socket
         with socket.socket() as listener:

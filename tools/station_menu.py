@@ -215,8 +215,13 @@ def register_build(package, program):
     # Successful compilation adds exactly its output, without running a search.
     settings = load_settings()
     record = package_record(package, package_manifest(package), str(program))
+    managed = {str(package), str(package.parent.parent / 'previous' / 'program.pkg')}
     settings['compiled_stations'] = [item for item in settings.get('compiled_stations', [])
-                                     if item['package'] != str(package)] + [record]
+                                     if item['package'] not in managed]
+    previous = package.parent.parent / 'previous' / 'program.pkg'
+    if previous.is_file():
+        settings['compiled_stations'].append(package_record(previous, package_manifest(previous), str(program)))
+    settings['compiled_stations'].append(record)
     update_source_links(settings)
     save_settings(settings)
 
@@ -233,8 +238,45 @@ def show_sources(settings):
 
 
 def saved_packages(settings):
-    return [(Path(item['package']), {'name': item.get('name', '?')})
-            for item in settings.get('compiled_stations', [])]
+    latest = {}
+    for item in settings.get('compiled_stations', []):
+        original = Path(item['package'])
+        package = latest_package(original, settings) if original.is_file() else original
+        key = item.get('program') or str(package.parent.parent.resolve())
+        rank = (package.is_file() and package.parent.name == 'current',
+                package.stat().st_mtime_ns if package.is_file() else -1, str(package))
+        if key not in latest or rank > latest[key][0]:
+            latest[key] = (rank, package, {'name': item.get('name', '?')})
+    return [(package, manifest) for _, package, manifest in
+            sorted(latest.values(), key=lambda item: str(item[1]))]
+
+
+def latest_package(package, settings=None):
+    """Resolve stale menu selections to the newest build of the same station."""
+    package = Path(package).resolve()
+    build_root = package.parent.parent
+    if build_root.name == 'wplc-build' and build_root.is_dir():
+        candidates = []
+        for folder in build_root.iterdir():
+            if not folder.is_dir() or folder.is_symlink():
+                continue
+            if folder.name.startswith('.') or folder.name == 'previous':
+                continue
+            candidate = folder / 'program.pkg'
+            if candidate.is_file() and (folder / 's7-map.json').is_file():
+                candidates.append(candidate)
+        if candidates:
+            return max(candidates, key=lambda path: (path.parent.name == 'current', path.stat().st_mtime_ns, str(path)))
+    settings = settings or load_settings()
+    records = settings.get('compiled_stations', [])
+    selected = next((item for item in records if Path(item['package']).resolve() == package), None)
+    if selected is None:
+        return package
+    key = selected.get('program') or str(package.parent.parent)
+    candidates = [Path(item['package']).resolve() for item in records
+                  if (item.get('program') or str(Path(item['package']).resolve().parent.parent)) == key
+                  and Path(item['package']).is_file()]
+    return max(candidates, key=lambda path: (path.parent.name == 'current', path.stat().st_mtime_ns, str(path))) if candidates else package
 
 
 def build_output(program):
@@ -244,8 +286,41 @@ def build_output(program):
         if len(projects) > 1:
             raise ValueError(f'ALARM: несколько .mpr в {directory}; выбор станции неоднозначен.')
         if projects:
-            return directory / 'wplc-build' / datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+            return directory / 'wplc-build' / ('.staging-' + datetime.now().strftime('%Y%m%d-%H%M%S-%f'))
     raise ValueError('Файл .mpr не найден в родительских папках Program; каталог сборки не определён.')
+
+
+def promote_build(staging):
+    """Keep exactly the current and immediately previous managed build."""
+    staging = staging.resolve()
+    root = staging.parent
+    if root.name != 'wplc-build' or not staging.name.startswith('.staging-'):
+        raise ValueError('Недопустимая временная папка сборки.')
+    current, previous = root / 'current', root / 'previous'
+    if not (staging / 'program.pkg').is_file() or not (staging / 's7-map.json').is_file():
+        raise ValueError('Сборка неполная; текущая версия сохранена.')
+    package_manifest(staging / 'program.pkg')
+    if previous.exists():
+        if not previous.is_dir() or previous.is_symlink() or previous.resolve().parent != root:
+            raise ValueError('Недопустимая папка предыдущей сборки.')
+        allowed = {'program.pkg', 'program.wat', 'manifest.json', 'build.json',
+                   's7-map.json', 'protocols.json'}
+        if any(path.name not in allowed or not path.is_file() or path.is_symlink()
+               for path in previous.iterdir()):
+            raise ValueError('В предыдущей сборке есть посторонние файлы; автоматическая замена отменена.')
+        check_build_not_running(previous, running_stations())
+        shutil.rmtree(previous)
+    if current.exists():
+        if not current.is_dir() or current.is_symlink() or current.resolve().parent != root:
+            raise ValueError('Недопустимая папка текущей сборки.')
+        current.rename(previous)
+    try:
+        staging.rename(current)
+    except OSError:
+        if previous.exists() and not current.exists():
+            previous.rename(current)
+        raise
+    return current / 'program.pkg'
 
 
 def compile_source(source, config):
@@ -268,10 +343,14 @@ def compile_source(source, config):
                '--station', str(output.parent.parent)]
     print(f'Сборка в {output}', flush=True)
     subprocess.run(command, cwd=ROOT, check=True)
-    config.setdefault('sources', {})[str(output / 'program.pkg')] = str(program)
+    package = promote_build(output)
+    config.setdefault('sources', {})[str(package)] = str(program)
+    previous = package.parent.parent / 'previous' / 'program.pkg'
+    if previous.is_file():
+        config['sources'][str(previous)] = str(program)
     save_config(config)
-    register_build(output / 'program.pkg', program)
-    print(f'Готово: {output / "program.pkg"}')
+    register_build(package, program)
+    print(f'Готово: {package}')
 
 
 def ask(label, default=''):
@@ -337,6 +416,7 @@ def rebuild(package, manifest, config):
 
 
 def launch(package, config, mode=None):
+    package = latest_package(package)
     runtime = runtime_path(config)
     mapping = package.with_name('s7-map.json')
     if not mapping.is_file():

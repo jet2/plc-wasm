@@ -173,6 +173,11 @@ port 102) or offline monitoring. An occupied port rejects the launch; the menu
 does not stop existing processes. Each launch gets its own executable copy under
 `build/live/menu/`. Windows opens a new console; Linux uses an available terminal
 emulator, falling back to an independent process with a log under `build/live/logs/`.
+New menu compilations use station-local `wplc-build/current` and `wplc-build/previous`.
+Compilation finishes in a staging directory before the current build is promoted;
+on failure the current build stays available. The menu groups saved builds by source
+station and always launches `current` when present. Older timestamped directories
+remain untouched during the transition, but are not offered as launch choices.
 The console shows one status table that refreshes every second: scan timing,
 memory, S7 clients and reads/writes, OPC UA, and each Modbus device. Redirected
 output receives a plain table every ten seconds. Stop wplc with Ctrl+C in its
