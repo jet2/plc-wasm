@@ -1,40 +1,90 @@
 //! Human-readable status for long-running WPLC modes.
+use ratatui::{
+    Terminal,
+    backend::CrosstermBackend,
+    layout::{Constraint, Layout},
+    style::{Color, Style},
+    text::{Line, Span},
+    widgets::{Block, Paragraph},
+};
 use std::io::{self, IsTerminal, Write};
+use std::sync::Mutex;
+
+type Screen = Terminal<CrosstermBackend<io::Stdout>>;
 
 pub struct Dashboard {
-    interactive: bool,
+    /// Full-screen ratatui terminal; `None` when stdout is not a terminal (plain text output).
+    screen: Mutex<Option<Screen>>,
 }
 
 impl Dashboard {
     pub fn new() -> Self {
-        Self {
-            interactive: io::stdout().is_terminal() && enable_ansi(),
-        }
+        let interactive = io::stdout().is_terminal() && enable_ansi();
+        // No alternate screen and no raw mode: Ctrl+C keeps its normal meaning in every mode.
+        let screen = interactive
+            .then(|| Terminal::new(CrosstermBackend::new(io::stdout())).ok())
+            .flatten();
+        Self { screen: Mutex::new(screen) }
     }
 
     pub fn refresh_interval(&self) -> std::time::Duration {
-        std::time::Duration::from_secs(if self.interactive { 1 } else { 10 })
+        std::time::Duration::from_secs(if self.screen.lock().unwrap().is_some() { 1 } else { 10 })
     }
 
     pub fn draw(&self, title: &str, sections: &[(&str, Vec<(String, String)>)]) -> io::Result<()> {
-        let mut out = io::stdout().lock();
-        if self.interactive {
-            write!(out, "\x1b[H\x1b[2J")?;
-        }
-        writeln!(out, "WPLC  {title}")?;
-        writeln!(out, "{:-<76}", "")?;
-        for (heading, rows) in sections {
-            writeln!(out, "{heading}")?;
-            for (label, value) in rows {
-                writeln!(out, "  {:<22} {}", shorten(label, 19), shorten(value, 46))?;
+        let mut guard = self.screen.lock().unwrap();
+        let Some(screen) = guard.as_mut() else {
+            return plain(title, sections);
+        };
+        screen.draw(|frame| {
+            let mut rows = vec![Constraint::Length(1)];
+            rows.extend(sections.iter().map(|(_, r)| Constraint::Length(r.len() as u16 + 2)));
+            rows.extend([Constraint::Min(0), Constraint::Length(1)]);
+            let areas = Layout::vertical(rows).split(frame.area());
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled("WPLC  ", Style::new().bold().fg(Color::Green)),
+                    Span::styled(title.to_string(), Style::new().bold()),
+                ])),
+                areas[0],
+            );
+            for (i, (heading, rows)) in sections.iter().enumerate() {
+                let width = areas[i + 1].width.saturating_sub(30) as usize;
+                let lines: Vec<Line> = rows
+                    .iter()
+                    .map(|(label, value)| {
+                        Line::from(vec![
+                            Span::styled(format!("{:<22}", shorten(label, 19)), Style::new().fg(Color::Cyan)),
+                            Span::raw(shorten(value, width.max(10))),
+                        ])
+                    })
+                    .collect();
+                frame.render_widget(
+                    Paragraph::new(lines).block(Block::bordered().title(heading.to_string())),
+                    areas[i + 1],
+                );
             }
-            writeln!(out)?;
-        }
-        if self.interactive {
-            writeln!(out, "Ctrl+C: stop WPLC")?;
-        }
-        out.flush()
+            frame.render_widget(
+                Paragraph::new(Span::styled("Ctrl+C: stop WPLC", Style::new().fg(Color::DarkGray))),
+                areas[areas.len() - 1],
+            );
+        })?;
+        screen.show_cursor()
     }
+}
+
+fn plain(title: &str, sections: &[(&str, Vec<(String, String)>)]) -> io::Result<()> {
+    let mut out = io::stdout().lock();
+    writeln!(out, "WPLC  {title}")?;
+    writeln!(out, "{:-<76}", "")?;
+    for (heading, rows) in sections {
+        writeln!(out, "{heading}")?;
+        for (label, value) in rows {
+            writeln!(out, "  {:<22} {}", shorten(label, 19), shorten(value, 46))?;
+        }
+        writeln!(out)?;
+    }
+    out.flush()
 }
 
 impl Default for Dashboard {

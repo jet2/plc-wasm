@@ -2,9 +2,9 @@
   "stations_folder": "C:\\lgok",
   "compiled_stations": [
     {
-      "package": "C:\\lgok\\Station_9\\wplc-build\\20261115-034223-087136\\program.pkg",
-      "name": "S7_MSU5_Project",
-      "program": "C:\\lgok\\Station_9\\S7_MSU5_Project\\Program",
+      "package": "C:\\lgok\\Station_7\\wplc-build\\20261115-192444-230570\\program.pkg",
+      "name": "EDS7_MB_L2",
+      "program": "C:\\lgok\\Station_7\\S7_MSU5_Project\\Program",
       "s7_map": true
     }
   ],
@@ -12,16 +12,16 @@
     {
       "name": "S7_MSU5_Project",
       "program": "C:\\lgok\\Station_7\\S7_MSU5_Project\\Program",
-      "packages": [],
-      "compiled": false
+      "packages": [
+        "C:\\lgok\\Station_7\\wplc-build\\20261115-192444-230570\\program.pkg"
+      ],
+      "compiled": true
     },
     {
       "name": "S7_MSU5_Project",
       "program": "C:\\lgok\\Station_9\\S7_MSU5_Project\\Program",
-      "packages": [
-        "C:\\lgok\\Station_9\\wplc-build\\20261115-034223-087136\\program.pkg"
-      ],
-      "compiled": true
+      "packages": [],
+      "compiled": false
     },
     {
       "name": "S7_Station_Project",

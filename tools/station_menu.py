@@ -415,7 +415,7 @@ def rebuild(package, manifest, config):
     compile_source({'program': str(source), 'name': manifest['name']}, config)
 
 
-def launch(package, config, mode=None):
+def launch(package, config, mode=None, quiet=False):
     package = latest_package(package)
     runtime = runtime_path(config)
     mapping = package.with_name('s7-map.json')
@@ -437,7 +437,7 @@ def launch(package, config, mode=None):
         default = package.with_name('protocols.json')
         if not default.is_file():
             default = Path(config.get('protocols', ROOT / '.local-validation' / 'protocols.json'))
-        settings = Path(ask('JSON настроек протоколов', str(default))).expanduser().resolve()
+        settings = Path(default if quiet else ask('JSON настроек протоколов', str(default))).expanduser().resolve()
         if not settings.exists():
             settings.parent.mkdir(parents=True, exist_ok=True)
             from station_protocols import default_snap7
@@ -747,37 +747,19 @@ def delete_menu():
 
 
 def emulator_command(config, package=None):
-    from station_protocols import station_files
-    default_folder = ''
-    if package:
-        source = config.get('sources', {}).get(str(package))
-        for parent in (Path(source).parents if source else package.parents):
-            if any(p.is_file() and p.suffix.lower() == '.mpr' for p in parent.iterdir()):
-                default_folder = str(parent)
-                break
-    folder = Path(ask('Папка станции с MPR и USO', default_folder or config.get('emulator_station', ''))).expanduser().resolve()
-    station_files(folder)
     suffix = '.exe' if os.name == 'nt' else ''
-    candidates = [ROOT.parent / 'WEmulator' / 'target' / profile / ('wemulator' + suffix)
-                  for profile in ('release', 'debug')]
-    default = next((p for p in candidates if p.is_file()), candidates[0])
-    executable = Path(ask('Исполняемый файл WEmulator', config.get('emulator', str(default)))).expanduser().resolve()
-    if not executable.is_file():
-        raise ValueError(f'Файл не найден: {executable}')
-    config['emulator'] = str(executable)
-    config['emulator_station'] = str(folder)
-    save_config(config)
-    return [str(executable), str(folder)]
+    home = ROOT.parent / 'wemu'
+    executable = Path(config.get('emulator') or home / 'target' / 'release' / ('wemu' + suffix))
+    settings = Path(config.get('emulator_settings') or home / 'wemu.json')
+    for path in (executable, settings):
+        if not path.is_file():
+            raise ValueError(f'Файл не найден: {path}')
+    print(f'Настройки эмулятора: {settings}')
+    print('Станция, OPC UA, Modbus и задержки задаются в этом файле; отредактируйте его до запуска.')
+    return [str(executable), '--config', str(settings)]
 
 
 def start_emulator(command, config):
-    settings = Path(config.get('protocols', ''))
-    port = 4841
-    if settings.is_file():
-        ua = read_json(settings).get('opcua')
-        if ua:
-            port = ua['port']
-    endpoint = ask('OPC UA сервера станции', f'opc.tcp://127.0.0.1:{port}/')
     log = detached_log('wemulator')
     options = {'cwd': Path(command[0]).parent, 'stdin': subprocess.DEVNULL,
                'stderr': subprocess.STDOUT, 'close_fds': True}
@@ -786,8 +768,7 @@ def start_emulator(command, config):
     else:
         options['start_new_session'] = True
     with log.open('ab') as stream:
-        process = subprocess.Popen(command + ['--opc', endpoint, '--ns', 'urn:plc-wasm:tags'],
-                                   stdout=stream, **options)
+        process = subprocess.Popen(command, stdout=stream, **options)
     time.sleep(0.5)
     if process.poll() is not None:
         raise RuntimeError(f'WEmulator завершился сразу после запуска (код {process.returncode}); журнал: {log}')
@@ -799,6 +780,11 @@ def detached_log(name):
     folder = ROOT / 'build' / 'live' / 'logs'
     folder.mkdir(parents=True, exist_ok=True)
     return folder / f'{name}-{datetime.now():%Y%m%d-%H%M%S-%f}.log'
+
+
+def current_label(config):
+    package = config.get('current_package')
+    return str(package) if package else 'не выбрана'
 
 
 def main():
@@ -827,13 +813,22 @@ def main():
                   '\n7) Выбрать станцию для компиляции'
                   '\n\nУправление\n4) Остановить экземпляр станции\n5) Изменить папку поиска'
                   '\n8) Удалить сборки пачкой\n9) Запустить эмулятор станции'
-                  '\nA) Запустить станцию + эмулятор\n0) Выход')
-            choice = menu_key('>','0123456789A')
+                  '\nA) Запустить новую станцию + эмулятор (выбрать и запомнить)'
+                  f'\nB) Запустить текущую станцию + эмулятор: {current_label(config)}\n0) Выход')
+            choice = menu_key('>','0123456789AB')
             if choice == '0':
                 return
             settings = load_settings()
             config = read_json(CONFIG) if CONFIG.exists() else {}
             root = search_folder(args.root)
+            if choice == 'B':
+                package = Path(config.get('current_package', ''))
+                if not package.is_file():
+                    raise ValueError('Текущая станция не выбрана или файл не найден: запустите пункт A.')
+                command = emulator_command(config, package)
+                launch(package, config, mode='3', quiet=True)
+                start_emulator(command, config)
+                continue
             if choice == '9':
                 start_emulator(emulator_command(config), config)
                 continue
@@ -884,6 +879,7 @@ def main():
                     rebuild(package, manifest, config)
                 elif choice == 'A':
                     command = emulator_command(config, package)
+                    config['current_package'] = str(package)  # saved by launch()
                     launch(package, config, mode='3')
                     start_emulator(command, config)
                 else:
