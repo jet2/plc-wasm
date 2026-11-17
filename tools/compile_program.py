@@ -10,6 +10,21 @@ from scl_codegen import Compiler, Project
 from scl_frontend import CompileError
 
 
+def station_label(mpr):
+    fields = {}
+    in_station = False
+    for line in read_source(mpr).splitlines():
+        line = line.strip()
+        if line.startswith('['):
+            in_station = line.casefold() == '[station]'
+        elif in_station:
+            key, _, value = line.partition('=')
+            fields[key.strip().casefold()] = value.strip()
+    if not fields.get('code') or not fields.get('caption'):
+        raise CompileError(f'Missing [Station] Code or Caption in {mpr}')
+    return f"{fields['code']}:{fields['caption']}"
+
+
 def load_project(directory):
     source_directory = directory / 'Source'
     if not source_directory.is_dir() or not any(source_directory.iterdir()):
@@ -70,7 +85,8 @@ def main():
             from station_protocols import station_files, generate
             if not args.s7_map:
                 raise CompileError('--station requires --s7-map')
-            station_files(args.station)
+            mpr, _ = station_files(args.station)
+            args.name = station_label(mpr)
         report = write_build(Compiler(load_project(args.project), args.system_profile), args.output, args.runtime,
                              s7_tables=args.project / 'Tables' if args.s7_map else None,
                              entry=args.entry, init=args.init, presets=args.presets, watches=args.watch, name=args.name,

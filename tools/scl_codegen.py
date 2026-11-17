@@ -289,8 +289,8 @@ class Compiler:
         if process_signals:
             # An exported I/O contact exists even when the current scan graph never references it.
             token = self.project.function(entry).token
-            for name in self.project.scalars:
-                self.needed_roots.setdefault(name, token)
+            for scalar in self.project.scalars:
+                self.needed_roots.setdefault(scalar, token)
         parsed_sets = []
         for text in presets:
             parser = Parser(text + ";", "<preset>")
