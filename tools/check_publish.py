@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PUBLIC_PATHS = frozenset({
     "tools/install_build_cache.ps1",
     "tools/build_linux.ps1",
+    "tools/start.sh",
     "tools/build_wemulator.ps1",
     "tools/rust_cache_wrapper.rs",
     ".gitignore", ".gitattributes", ".githooks/pre-push", "AGENTS.md", "README.md", "ABI.md",

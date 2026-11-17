@@ -29,6 +29,7 @@ try {
     $destination = 'build/linux-x86_64'
     New-Item -ItemType Directory -Force $destination | Out-Null
     Copy-Item -LiteralPath $library -Destination "$destination/libsnap7.so" -Force
+    Copy-Item -LiteralPath 'tools/start.sh' -Destination "$destination/start.sh" -Force
     Copy-Item -LiteralPath 'target/x86_64-unknown-linux-gnu/release/station-runtime' -Destination "$destination/wplc" -Force
 } finally {
     Pop-Location
