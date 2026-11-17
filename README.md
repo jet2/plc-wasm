@@ -184,11 +184,13 @@ output receives a plain table every ten seconds. Stop wplc with Ctrl+C in its
 window or item 4 in the menu. Runtime errors appear there; requesting a window
 is not proof of a successful server startup. Existing WinCC settings are not modified.
 
-On Windows, `powershell -File tools/build_linux.ps1` builds the x86_64 Linux musl
-runtime and copies it to `build/linux-x86_64/wplc`. The script uses the local Rust
-toolchain, `rust-lld`, and a minimal `libdl.a` archive because musl provides
-`dlopen` in libc. The Linux binary needs a Linux Snap7 shared library configured
-for S7 service; the Windows DLL cannot be loaded there.
+On Windows, `powershell -File tools/build_linux.ps1` builds a dynamically linked
+x86-64 Linux runtime and packages `wplc` and `libsnap7.so` in `build/linux-x86_64`.
+Build the Snap7 library with `make` in the vendor's `build/linux` directory on
+Linux, or pass its path to the script with `-Snap7Library`. The runtime uses
+glibc and the library built with g++ requires the Linux C++ runtime.
+In the station's `protocols.json`, set `"snap7": {"library":"./libsnap7.so","port":102}`.
+Run `./wplc gateway program.pkg s7-map.json protocols.json 0` from that directory.
 
 Menu item 4 lists running `wplc` instances whose executables are under this
 repository's `build/live/`, including instances launched before opening the menu.
