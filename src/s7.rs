@@ -2,7 +2,7 @@
 use crate::{Manifest, Runtime};
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
@@ -269,6 +269,7 @@ pub struct Bridge {
     faulted: bool,
     generation: u64,
     names: HashMap<String, Option<(usize, usize)>>,
+    exported_names: BTreeSet<String>,
     device_pending: BTreeMap<u32, Vec<u8>>,
     published_signals: BTreeMap<u32, Vec<u8>>,
     signal_pending: BTreeMap<u32, Vec<u8>>,
@@ -309,6 +310,46 @@ impl Bridge {
                     .or_insert(location);
             }
         }
+        let mut exported_names = BTreeSet::new();
+        let ambiguous: HashSet<_> = names
+            .iter()
+            .filter(|(_, loc)| loc.is_none())
+            .map(|(name, _)| name.clone())
+            .collect();
+        for (bi, fields) in map
+            .blocks
+            .iter()
+            .map(|block| &block.fields)
+            .chain(std::iter::once(&map.signals))
+            .enumerate()
+        {
+            for (fi, field) in fields.iter().enumerate() {
+                for alias in &field.aliases {
+                    if !ambiguous.contains(&alias.to_ascii_uppercase()) {
+                        exported_names.insert(alias.clone());
+                        continue;
+                    }
+                    let name = if let Some(block) = map.blocks.get(bi) {
+                        let byte = field.bit / 8;
+                        let address = match field.kind {
+                            Kind::Bool => format!("X{byte}.{}", field.bit % 8),
+                            Kind::Word | Kind::Int => format!("W{byte}"),
+                            Kind::Real | Kind::Dword | Kind::Dint => format!("D{byte}"),
+                            Kind::Byte | Kind::String => format!("B{byte}"),
+                        };
+                        format!("{alias}@DB{}.DB{address}", block.number)
+                    } else {
+                        field.name.clone()
+                    };
+                    let location = Some((bi, fi));
+                    ensure!(
+                        *names.entry(name.to_ascii_uppercase()).or_insert(location) == location,
+                        "ambiguous qualified tag {name}"
+                    );
+                    exported_names.insert(name);
+                }
+            }
+        }
         Ok(Self {
             runtime,
             map,
@@ -317,6 +358,7 @@ impl Bridge {
             faulted: false,
             generation: 0,
             names,
+            exported_names,
             device_pending: BTreeMap::new(),
             published_signals,
             signal_pending: BTreeMap::new(),
@@ -324,6 +366,9 @@ impl Bridge {
     }
     pub fn map(&self) -> &Map {
         &self.map
+    }
+    pub fn exported_names(&self) -> &BTreeSet<String> {
+        &self.exported_names
     }
     pub fn generation(&self) -> u64 {
         self.generation

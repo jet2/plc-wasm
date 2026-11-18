@@ -91,6 +91,28 @@ fn bridge() -> Bridge {
 }
 
 #[test]
+fn duplicate_export_names_select_the_address_and_preserve_access() {
+    let (package, mut map) = fixture();
+    for field in &mut map.blocks[0].fields[..2] {
+        field.aliases.push("Shared".into());
+    }
+    let mut bridge = Bridge::new(
+        Runtime::load(Package::decode(&package).unwrap()).unwrap(),
+        map,
+    )
+    .unwrap();
+    assert!(bridge.named("shared").is_err());
+    assert!(!bridge.exported_names().contains("Shared"));
+    assert!(bridge.exported_names().contains("Shared@DB1.DBW0"));
+    assert!(bridge.exported_names().contains("Shared@DB1.DBW2"));
+    assert!(bridge.queue_named("Shared@DB1.DBW0", &[0, 42]).is_err());
+    bridge.queue_named("Shared@DB1.DBW2", &[0, 42]).unwrap();
+    bridge.cycle(&[], 100).unwrap();
+    assert_eq!(bridge.read_named("Shared@DB1.DBW0").unwrap(), [0, 0]);
+    assert_eq!(bridge.read_named("Shared@DB1.DBW2").unwrap(), [0, 42]);
+}
+
+#[test]
 fn process_signals_share_cycle_boundary_and_device_priority() {
     let (package, mut map) = fixture();
     let mut input = map.blocks[0].fields.remove(0);

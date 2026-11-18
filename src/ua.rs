@@ -191,14 +191,7 @@ pub fn build(
             .lock()
             .map_err(|_| anyhow::anyhow!("bridge poisoned"))?;
         let names: BTreeSet<String> = if config.tags.is_empty() {
-            guard
-                .map()
-                .blocks
-                .iter()
-                .flat_map(|b| &b.fields)
-                .chain(guard.map().signals.iter())
-                .flat_map(|f| f.aliases.iter().cloned())
-                .collect()
+            guard.exported_names().clone()
         } else {
             config.tags.iter().cloned().collect()
         };

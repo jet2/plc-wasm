@@ -30,6 +30,12 @@ Bus inputs and outputs use Modbus; remaining tags use named OPC UA nodes
 `tag/<table symbol>` in namespace `urn:plc-wasm:tags`. Default UA port is 4841.
 No address-based OPC UA namespace is required by this integration.
 
+When an exported DB alias denotes several fields, the default tag list publishes
+each occurrence as `tag/<alias>@<S7 address>`, for example `tag/Shared@DB1.DBW2`.
+The address comes from the loaded map. The short ambiguous alias remains invalid
+in explicit tag selections. Each qualified node retains its own type and access
+rights. Existing maps support this naming scheme without regeneration.
+
 Rebuild with the current compiler to include named I/Q/M process signals in
 the map. They reference independent Wasm scalar slots, not synthetic DBs.
 Snap7 DB access is unchanged. Process inputs are writable; Q/M signals are
