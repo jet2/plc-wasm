@@ -1,10 +1,10 @@
 mod console;
 use anyhow::{Result, bail, ensure};
 use serde::Deserialize;
-use station_runtime::dashboard::{Dashboard, bytes, resident_bytes};
-use station_runtime::s7::{Bridge, Map};
-use station_runtime::snap7::Server;
-use station_runtime::{Manifest, Package, Runtime};
+use wplc::dashboard::{Dashboard, bytes, resident_bytes};
+use wplc::s7::{Bridge, Map};
+use wplc::snap7::Server;
+use wplc::{Manifest, Package, Runtime};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use std::{env, fs, io::Read, path::Path};
@@ -106,10 +106,6 @@ fn main() -> Result<()> {
     if args.len() == 1 {
         return console::run();
     }
-    let executable = env::current_exe()?;
-    ensure!(!executable.file_stem().is_some_and(|name| name.eq_ignore_ascii_case("wplc")),
-            "Запускайте WPLC без аргументов. Программа выбирается в консоли.");
-
     let (_stop, signal) = tokio::sync::watch::channel(false);
     execute(&args, signal)
 }
@@ -133,14 +129,14 @@ fn execute(args: &[String], stop: tokio::sync::watch::Receiver<bool>) -> Result<
             let inputs = vec![0; runtime.manifest.inputs.size as usize];
             let map: Map =
                 serde_json::from_slice(&bounded_read_limit(&args[3], 64 * 1024 * 1024)?)?;
-            let config: station_runtime::gateway::Config =
+            let config: wplc::gateway::Config =
                 serde_json::from_slice(&bounded_read_limit(&args[4], 1024 * 1024)?)?;
             let cycles = args.get(5).map(|s| s.parse()).transpose()?.unwrap_or(0);
             tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)
                 .enable_all()
                 .build()?
-                .block_on(station_runtime::gateway::run(
+                .block_on(wplc::gateway::run(
                     Bridge::new(runtime, map)?,
                     inputs,
                     config,
@@ -181,7 +177,7 @@ fn execute(args: &[String], stop: tokio::sync::watch::Receiver<bool>) -> Result<
             let server = Server::start_at(Path::new(&args[4]), ip, port, bridge.clone())?;
             let dashboard = Dashboard::new();
             let started = Instant::now();
-            let s7_rows = |status: station_runtime::snap7::Status| {
+            let s7_rows = |status: wplc::snap7::Status| {
                 vec![
                     (
                         "Listener".into(),
@@ -453,7 +449,7 @@ fn execute(args: &[String], stop: tokio::sync::watch::Receiver<bool>) -> Result<
             );
         }
         _ => bail!(
-            "Usage: station-runtime pack MANIFEST.json MODULE.wat OUTPUT.pkg\n       station-runtime run PROGRAM.pkg [CYCLES]\n       station-runtime s7-run PROGRAM.pkg MAP.json ACTIONS.json\n       station-runtime monitor PROGRAM.pkg MAP.json [PERIOD_MS] [CYCLES]\n       station-runtime serve PROGRAM.pkg MAP.json SNAP7_LIBRARY [PORT] [PERIOD_MS] [CYCLES] [IP] [RACK] [SLOT]\n       station-runtime gateway PROGRAM.pkg MAP.json PROTOCOLS.json [CYCLES]\nServe defaults: loopback port 1102, 100 ms, unlimited cycles (0). Gateway adapters use JSON settings."
+            "Usage: wplc pack MANIFEST.json MODULE.wat OUTPUT.pkg\n       wplc run PROGRAM.pkg [CYCLES]\n       wplc s7-run PROGRAM.pkg MAP.json ACTIONS.json\n       wplc monitor PROGRAM.pkg MAP.json [PERIOD_MS] [CYCLES]\n       wplc serve PROGRAM.pkg MAP.json SNAP7_LIBRARY [PORT] [PERIOD_MS] [CYCLES] [IP] [RACK] [SLOT]\n       wplc gateway PROGRAM.pkg MAP.json PROTOCOLS.json [CYCLES]\nServe defaults: loopback port 1102, 100 ms, unlimited cycles (0). Gateway adapters use JSON settings."
         ),
     }
     Ok(())

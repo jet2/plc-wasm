@@ -118,7 +118,7 @@ def main():
     parser.add_argument("project", type=Path, help="STEP 7 Program directory")
     parser.add_argument("--name", required=True)
     parser.add_argument("--output", required=True, type=Path)
-    parser.add_argument("--runtime", type=Path, help="built station-runtime executable; also produce program.pkg")
+    parser.add_argument("--runtime", type=Path, help="built wplc executable; also produce program.pkg")
     args = parser.parse_args()
     directory = args.project / "Source"
     manifest, wat = compile_sources(*(read_source(directory / f) for f in ("MPR_UDT.SCL", "MPR_DB.SCL", "parInit.SCL")), args.name)

@@ -1,6 +1,6 @@
 //! Native loopback integration tests. Set SNAP7_TEST_LIBRARY to a trusted library.
 use libloading::Library;
-use station_runtime::{
+use wplc::{
     Manifest, Package, Region, Runtime,
     s7::{Block, Bridge, Field, Kind, Map},
     snap7::Server,

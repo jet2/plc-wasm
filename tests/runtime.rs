@@ -1,4 +1,4 @@
-use station_runtime::{Manifest, Package, Region, Runtime};
+use wplc::{Manifest, Package, Region, Runtime};
 
 fn manifest() -> Manifest {
     Manifest {

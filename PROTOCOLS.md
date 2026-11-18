@@ -5,7 +5,7 @@ one Wasm station image. No recompilation of the station package is required.
 Protocol settings and field-to-register mappings are external JSON.
 
 ```text
-station-runtime gateway PROGRAM.pkg MAP.json PROTOCOLS.json [CYCLES]
+wplc gateway PROGRAM.pkg MAP.json PROTOCOLS.json [CYCLES]
 ```
 
 `CYCLES=0` (default) runs until Ctrl+C. Finite runs include the startup scan.

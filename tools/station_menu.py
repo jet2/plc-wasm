@@ -374,8 +374,10 @@ def save_config(config):
 
 def runtime_path(config):
     suffix = '.exe' if os.name == 'nt' else ''
-    default = ROOT / 'target' / 'release' / ('station-runtime' + suffix)
+    default = ROOT / 'target' / 'release' / ('wplc' + suffix)
     path = Path(config.get('runtime', str(default))).expanduser().resolve()
+    if path.name.lower() == 'station-runtime' + suffix:
+        path = path.with_name('wplc' + suffix)
     if not path.is_file():
         raise ValueError(f'Файл не найден: {path}')
     config['runtime'] = str(path)

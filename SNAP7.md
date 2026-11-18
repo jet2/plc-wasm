@@ -29,7 +29,7 @@ to be validated on a Linux host.
 ## Running
 
 ```text
-station-runtime serve PROGRAM.pkg MAP.json SNAP7_LIBRARY [PORT] [PERIOD_MS] [CYCLES] [IP] [RACK] [SLOT]
+wplc serve PROGRAM.pkg MAP.json SNAP7_LIBRARY [PORT] [PERIOD_MS] [CYCLES] [IP] [RACK] [SLOT]
 ```
 
 Defaults: loopback `127.0.0.1:1102`, 100 ms, unlimited cycles (`0`). Explicit

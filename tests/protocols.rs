@@ -1,4 +1,4 @@
-use station_runtime::{
+use wplc::{
     Manifest, Package, Region, Runtime,
     modbus::{self, Device, Operation, Request},
     s7::{Block, Bridge, Field, Kind, Map},

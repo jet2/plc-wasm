@@ -1,5 +1,5 @@
-use station_runtime::s7::{Block, Bridge, Field, Kind, Map};
-use station_runtime::{Manifest, Package, Region, Runtime};
+use wplc::s7::{Block, Bridge, Field, Kind, Map};
+use wplc::{Manifest, Package, Region, Runtime};
 
 fn fixture(scan: &str) -> (Runtime, Map) {
     let manifest = Manifest {

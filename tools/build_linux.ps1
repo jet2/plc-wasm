@@ -24,13 +24,13 @@ try {
     }
     $linker = Join-Path $root '.toolchain\linux-gcc.cmd'
     @('@echo off','"%~dp0zigpy\ziglang\zig.exe" cc -target x86_64-linux-gnu.2.28 %*') | Set-Content $linker -Encoding ascii
-    & "$env:CARGO_HOME\bin\cargo.exe" rustc --locked --release --target x86_64-unknown-linux-gnu --bin station-runtime -j 2 '--' -C "linker=$linker" -C linker-flavor=gcc
+    & "$env:CARGO_HOME\bin\cargo.exe" rustc --locked --release --target x86_64-unknown-linux-gnu --bin wplc -j 2 '--' -C "linker=$linker" -C linker-flavor=gcc
     if ($LASTEXITCODE) { exit $LASTEXITCODE }
     $destination = 'build/linux-x86_64'
     New-Item -ItemType Directory -Force $destination | Out-Null
     Copy-Item -LiteralPath $library -Destination "$destination/libsnap7.so" -Force
     Copy-Item -LiteralPath 'tools/start.sh' -Destination "$destination/start.sh" -Force
-    Copy-Item -LiteralPath 'target/x86_64-unknown-linux-gnu/release/station-runtime' -Destination "$destination/wplc" -Force
+    Copy-Item -LiteralPath 'target/x86_64-unknown-linux-gnu/release/wplc' -Destination "$destination/wplc" -Force
 } finally {
     Pop-Location
 }
