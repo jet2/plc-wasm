@@ -1,3 +1,4 @@
+mod console;
 use anyhow::{Result, bail, ensure};
 use serde::Deserialize;
 use station_runtime::dashboard::{Dashboard, bytes, resident_bytes};
@@ -102,6 +103,27 @@ enum S7Action {
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
+    if args.len() == 1 {
+        return console::run();
+    }
+    let executable = env::current_exe()?;
+    ensure!(!executable.file_stem().is_some_and(|name| name.eq_ignore_ascii_case("wplc")),
+            "Запускайте WPLC без аргументов. Программа выбирается в консоли.");
+
+    let (_stop, signal) = tokio::sync::watch::channel(false);
+    execute(&args, signal)
+}
+
+fn wait_cycle(deadline: Instant, stop: &tokio::sync::watch::Receiver<bool>) -> bool {
+    while !*stop.borrow() {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() { return true; }
+        std::thread::park_timeout(remaining);
+    }
+    false
+}
+
+fn execute(args: &[String], stop: tokio::sync::watch::Receiver<bool>) -> Result<()> {
     match args.get(1).map(String::as_str) {
         Some("gateway") if (5..=6).contains(&args.len()) => {
             let runtime = Runtime::load(Package::decode(&bounded_read(&args[2])?)?)?;
@@ -126,6 +148,7 @@ fn main() -> Result<()> {
                     station,
                     wasm_bytes,
                     state_bytes,
+                    stop,
                 ))?;
         }
         Some("serve") if (5..=11).contains(&args.len()) => {
@@ -209,7 +232,7 @@ fn main() -> Result<()> {
                 {
                     break;
                 }
-                std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
+                if !wait_cycle(deadline, &stop) { break; }
                 let start = Instant::now();
                 let generation = {
                     let mut guard = bridge
@@ -318,7 +341,7 @@ fn main() -> Result<()> {
             let mut maximum_ms = 0.0f64;
             let mut overruns = 0u64;
             loop {
-                std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
+                if !wait_cycle(deadline, &stop) { break; }
                 let cycle_start = Instant::now();
                 bridge.cycle(&inputs, period_ms)?;
                 let elapsed = cycle_start.elapsed();

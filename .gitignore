@@ -25,3 +25,5 @@ __pycache__/
 *.tar
 *.gz
 *.csv
+wplc.json
+wplc.*.tmp

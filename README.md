@@ -190,7 +190,7 @@ Build the Snap7 library with `make` in the vendor's `build/linux` directory on
 Linux, or pass its path to the script with `-Snap7Library`. The runtime uses
 glibc and the library built with g++ requires the Linux C++ runtime.
 In the station's `protocols.json`, set `"snap7": {"library":"./libsnap7.so","port":102}`.
-Run `./wplc gateway program.pkg s7-map.json protocols.json 0` from that directory.
+Run `./start.sh` from that directory. It starts `./wplc` without arguments.
 
 Menu item 4 lists running `wplc` instances whose executables are under this
 repository's `build/live/`, including instances launched before opening the menu.
@@ -216,3 +216,7 @@ Deletion removes the known build artifacts and their now-empty folders; source
 projects and `.mpr` files are not deleted. Completed removals are removed from
 both local catalogs and source associations. If a later deletion fails, already
 completed removals remain deleted and are reported; the batch is not transactional.
+
+### Выбор программы в WPLC
+
+Запустите WPLC без аргументов. При первом запуске рядом с исполняемым файлом создаётся `wplc.json`. В консоли нажмите **1** и Enter, выберите файл `.pkg` по номеру либо введите путь. WPLC проверяет программу и соседний `s7-map.json`, затем сохраняет выбор. **2** запускает станцию, **3** и Enter останавливают её и возвращают меню для смены программы. Панель показывает RUN и номер цикла после запуска. В режиме gateway настройки протоколов по умолчанию берутся из соседнего с пакетом `protocols.json`. Пункт запуска в меню станций подготавливает настройки экземпляра с автоматическим запуском.

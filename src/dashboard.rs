@@ -65,7 +65,7 @@ impl Dashboard {
                 );
             }
             frame.render_widget(
-                Paragraph::new(Span::styled("Ctrl+C: stop WPLC", Style::new().fg(Color::DarkGray))),
+                Paragraph::new(Span::styled(if std::env::args_os().len() == 1 { "3 + Enter — остановить станцию" } else { "Ctrl+C: stop WPLC" }, Style::new().fg(Color::DarkGray))),
                 areas[areas.len() - 1],
             );
         })?;

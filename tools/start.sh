@@ -19,4 +19,7 @@ if (( EUID != 0 && 102 < first )); then
         sudo setcap cap_net_bind_service=ep ./wplc
     fi
 fi
-exec ./wplc gateway program.pkg s7-map.json protocols.json "${1:-0}"
+if [[ ! -e wplc.json && -f program.pkg ]]; then
+    (set -C; echo '{"package":"program.pkg","autostart":true}' > wplc.json)
+fi
+exec ./wplc

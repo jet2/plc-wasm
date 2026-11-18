@@ -103,8 +103,11 @@ class StationMenuTests(unittest.TestCase):
                 self.assertTrue(options['startupinfo'].dwFlags & menu.subprocess.STARTF_USESHOWWINDOW)
                 self.assertEqual(options['startupinfo'].wShowWindow, 1)
             # A Linux terminal emulator may prefix the command.
-            gateway = command.index('gateway')
-            self.assertEqual(command[gateway + 1:], [str(package), str(package.with_name('s7-map.json')), str(settings.resolve()), '0'])
+            executable = Path(command[-1])
+            self.assertIn(executable.name, ('wplc.exe', 'wplc'))
+            cfg = menu.read_json(executable.with_name('wplc.json'))
+            self.assertEqual((cfg['mode'], cfg['package'], cfg['protocols']), ('gateway', str(package), str(settings.resolve())))
+            self.assertTrue(cfg['autostart'])
 
     def test_batch_selection_ranges_all_and_invalid_input(self):
         self.assertEqual(menu.batch_selection('1,3-5,3', 5), [0, 2, 3, 4])

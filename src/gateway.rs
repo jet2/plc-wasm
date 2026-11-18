@@ -47,6 +47,7 @@ pub async fn run(
     station: String,
     wasm_bytes: u32,
     state_bytes: u32,
+    mut console_stop: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
     ensure!(
         (1..=60000).contains(&config.period_ms),
@@ -226,6 +227,7 @@ pub async fn run(
                 break;
             }
             tokio::select! {
+                _ = console_stop.changed() => break,
                 result = tokio::signal::ctrl_c() => { result?; break; }
                 _ = interval.tick() => {}
             }

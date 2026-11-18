@@ -430,7 +430,7 @@ def launch(package, config, mode=None, quiet=False):
         raise ValueError('Для запуска с циклом и S7 нужна карта s7-map.json. Пересоберите пакет с --s7-map.')
     mode = mode or menu_key('Режим: 1 — Snap7, 2 — офлайн монитор, 3 — Станция — OPC UA / Modbus / S7:', '123')
     period = integer('Период цикла, мс', 100, 1, 60000) if mode != '3' else 100
-    command = [str(runtime), 'monitor', str(package), str(mapping), str(period), '0']
+    runtime_settings = {'package': str(package.resolve()), 'mode': 'monitor', 'period_ms': period, 'autostart': True}
     if mode == '1':
         default = ROOT / '.local-validation/vendor/snap7/build/bin/win64/snap7.dll'
         library = Path(ask('Библиотека Snap7', config.get('snap7', str(default) if os.name == 'nt' else ''))).expanduser().resolve()
@@ -441,8 +441,7 @@ def launch(package, config, mode=None, quiet=False):
         require_free_local_port(port, 'Snap7', endpoint['ip'])
         config['s7_connection'] = endpoint
         config['snap7'] = str(library)
-        command = [str(runtime), 'serve', str(package), str(mapping), str(library), str(port), str(period), '0']
-        command.extend(str(endpoint[key]) for key in ('ip', 'rack', 'slot'))
+        runtime_settings.update(mode='serve', snap7=str(library), port=port, **endpoint)
     elif mode == '3':
         from station_protocols import default_snap7
         default = package.with_name('protocols.json')
@@ -476,7 +475,7 @@ def launch(package, config, mode=None, quiet=False):
                 json.dump(adapters, stream, ensure_ascii=False, indent=2)
                 stream.write('\n')
             Path(stream.name).replace(settings)
-        command = [str(runtime), 'gateway', str(package), str(mapping), str(settings), '0']
+        runtime_settings.update(mode='gateway', protocols=str(settings))
     elif mode != '2':
         raise ValueError('Неизвестный режим.')
     save_config(config)
@@ -485,7 +484,8 @@ def launch(package, config, mode=None, quiet=False):
     destination.mkdir(parents=True)
     executable = destination / ('wplc.exe' if os.name == 'nt' else 'wplc')
     shutil.copy2(runtime, executable)
-    command[0] = str(executable)
+    executable.with_name('wplc.json').write_text(json.dumps(runtime_settings, ensure_ascii=False, indent=2), encoding='utf-8')
+    command = [str(executable)]
     visible_console = True
     if os.name == 'nt':
         startup = subprocess.STARTUPINFO()
@@ -708,6 +708,12 @@ def check_build_not_running(folder, processes):
         paths.append(str(folder.relative_to(ROOT)))
     for process in processes:
         command = process['command'].replace('\\', '/').casefold()
+        if process.get('identity'):
+            settings = Path(process['identity'][0]).with_name('wplc.json')
+            if settings.exists():
+                package = read_json(settings).get('package')
+                if package and (settings.parent / package).parent.is_dir() and (settings.parent / package).parent.samefile(folder):
+                    raise ValueError(f'Сборка используется процессом PID {process["pid"]}.')
         if any(path.replace('\\', '/').casefold() + '/' in command for path in paths):
             raise ValueError(f'Сборка используется процессом PID {process["pid"]}. Сначала остановите его.')
 
