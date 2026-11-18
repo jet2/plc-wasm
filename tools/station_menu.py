@@ -58,12 +58,12 @@ def menu_number(label, count):
     return 0 if key == '0' else MENU_KEYS.index(key) + 1
 
 
-def require_free_local_port(port, protocol):
+def require_free_local_port(port, protocol, ip='127.0.0.1'):
     with socket.socket() as reservation:
         try:
-            reservation.bind(('127.0.0.1', port))
+            reservation.bind((ip, port))
         except OSError as error:
-            raise ValueError(f'{protocol}: порт 127.0.0.1:{port} занят; '
+            raise ValueError(f'{protocol}: порт {ip}:{port} занят или адрес недоступен; '
                              'остановите прежний экземпляр или укажите другой порт.') from error
 
 
@@ -415,6 +415,13 @@ def rebuild(package, manifest, config):
     compile_source({'program': str(source), 'name': manifest['name']}, config)
 
 
+def s7_connection(settings):
+    from ipaddress import IPv4Address
+    return dict(ip=str(IPv4Address(ask('Локальный IPv4 S7', settings.get('ip', '127.0.0.1')))),
+                rack=integer('Rack клиента S7', settings.get('rack', 0), 0, 7),
+                slot=integer('Slot клиента S7', settings.get('slot', 2), 0, 31))
+
+
 def launch(package, config, mode=None, quiet=False):
     package = latest_package(package)
     runtime = runtime_path(config)
@@ -429,18 +436,21 @@ def launch(package, config, mode=None, quiet=False):
         library = Path(ask('Библиотека Snap7', config.get('snap7', str(default) if os.name == 'nt' else ''))).expanduser().resolve()
         if not library.is_file():
             raise ValueError(f'Библиотека не найдена: {library}')
-        port = integer('Порт S7 на 127.0.0.1', 102, 1, 65535)
-        require_free_local_port(port, 'Snap7')
+        endpoint = s7_connection(config.get('s7_connection', {}))
+        port = integer('Порт S7', 102, 1, 65535)
+        require_free_local_port(port, 'Snap7', endpoint['ip'])
+        config['s7_connection'] = endpoint
         config['snap7'] = str(library)
         command = [str(runtime), 'serve', str(package), str(mapping), str(library), str(port), str(period), '0']
+        command.extend(str(endpoint[key]) for key in ('ip', 'rack', 'slot'))
     elif mode == '3':
+        from station_protocols import default_snap7
         default = package.with_name('protocols.json')
         if not default.is_file():
             default = Path(config.get('protocols', ROOT / '.local-validation' / 'protocols.json'))
         settings = Path(default if quiet else ask('JSON настроек протоколов', str(default))).expanduser().resolve()
         if not settings.exists():
             settings.parent.mkdir(parents=True, exist_ok=True)
-            from station_protocols import default_snap7
             settings.write_text(json.dumps({
                 'period_ms': 100,
                 'opcua': {'port': 4841, 'pki_dir': str(ROOT / '.local-validation/pki'), 'tags': []},
@@ -450,10 +460,22 @@ def launch(package, config, mode=None, quiet=False):
             print(f'Созданы настройки OPC UA: {settings}. Modbus-устройства и Snap7 добавляются в этот JSON.')
         config['protocols'] = str(settings)
         adapters = read_json(settings)
+        s7 = default_snap7()
+        if adapters.get('snap7') is not None:
+            s7.update(adapters['snap7'])
+        if not quiet:
+            s7.update(s7_connection(s7))
         for protocol, key in (('OPC UA', 'opcua'), ('Snap7', 'snap7')):
-            adapter = adapters.get(key)
+            adapter = s7 if key == 'snap7' else adapters.get(key)
             if isinstance(adapter, dict) and isinstance(adapter.get('port'), int):
-                require_free_local_port(adapter['port'], protocol)
+                require_free_local_port(adapter['port'], protocol, adapter.get('ip', '127.0.0.1') if key == 'snap7' else '127.0.0.1')
+        if adapters.get('snap7') != s7:
+            adapters['snap7'] = s7
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=settings.parent, delete=False) as stream:
+                json.dump(adapters, stream, ensure_ascii=False, indent=2)
+                stream.write('\n')
+            Path(stream.name).replace(settings)
         command = [str(runtime), 'gateway', str(package), str(mapping), str(settings), '0']
     elif mode != '2':
         raise ValueError('Неизвестный режим.')

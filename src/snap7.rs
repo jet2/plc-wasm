@@ -191,16 +191,24 @@ pub struct Server {
 }
 
 impl Server {
-    /// The initial integration deliberately only listens on loopback.
     pub fn start(library: &Path, port: u16, bridge: Arc<Mutex<Bridge>>) -> Result<Self> {
+        Self::start_at(library, Ipv4Addr::LOCALHOST, port, bridge)
+    }
+    pub fn start_at(
+        library: &Path,
+        ip: Ipv4Addr,
+        port: u16,
+        bridge: Arc<Mutex<Bridge>>,
+    ) -> Result<Self> {
         fn require_send_sync<T: Send + Sync>() {}
         require_send_sync::<ContextState>();
         ensure!(port != 0, "Snap7 listener requires a nonzero port");
         // Snap7 enables SO_REUSEADDR, which can allow duplicate listeners on Windows.
         // Fail early for an occupied endpoint. Its API has no socket handoff, so a
         // cross-process race between releasing this reservation and native bind remains.
-        let reservation = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port))
-            .context("Snap7 loopback port is unavailable")?;
+        let reservation = TcpListener::bind(SocketAddrV4::new(ip, port))
+            .with_context(|| format!("Snap7 endpoint {ip}:{port} is unavailable"))?;
+        let address = std::ffi::CString::new(ip.to_string())?;
         let api = Api::load(library)?;
         let handle = unsafe { (api.create)() };
         ensure!(handle != 0, "Snap7 server allocation failed");
@@ -245,7 +253,7 @@ impl Server {
                 "RW callback",
             )?;
             drop(reservation);
-            check((server.api.start)(handle, c"127.0.0.1".as_ptr()), "listen")?;
+            check((server.api.start)(handle, address.as_ptr()), "listen")?;
         }
         Ok(server)
     }

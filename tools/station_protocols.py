@@ -21,7 +21,7 @@ def snap7_library():
 
 
 def default_snap7():
-    return {'library': snap7_library(), 'port': 102}
+    return {'library': snap7_library(), 'port': 102, 'ip': '127.0.0.1', 'rack': 0, 'slot': 2}
 
 
 def station_files(folder):

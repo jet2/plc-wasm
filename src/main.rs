@@ -128,10 +128,18 @@ fn main() -> Result<()> {
                     state_bytes,
                 ))?;
         }
-        Some("serve") if (5..=8).contains(&args.len()) => {
+        Some("serve") if (5..=11).contains(&args.len()) => {
             let port: u16 = args.get(5).map(|s| s.parse()).transpose()?.unwrap_or(1102);
             let period_ms: u32 = args.get(6).map(|s| s.parse()).transpose()?.unwrap_or(100);
             let limit: u64 = args.get(7).map(|s| s.parse()).transpose()?.unwrap_or(0);
+            let ip = args
+                .get(8)
+                .map(|s| s.parse())
+                .transpose()?
+                .unwrap_or(std::net::Ipv4Addr::LOCALHOST);
+            let rack: u8 = args.get(9).map(|s| s.parse()).transpose()?.unwrap_or(0);
+            let slot: u8 = args.get(10).map(|s| s.parse()).transpose()?.unwrap_or(2);
+            ensure!(rack < 8 && slot < 32, "invalid S7 rack or slot");
             ensure!(
                 (1..=60000).contains(&period_ms),
                 "period must be 1..60000 ms"
@@ -147,12 +155,15 @@ fn main() -> Result<()> {
             // Complete startup before accepting client writes that initialization could reset.
             bridge.cycle(&inputs, period_ms)?;
             let bridge = Arc::new(Mutex::new(bridge));
-            let server = Server::start(Path::new(&args[4]), port, bridge.clone())?;
+            let server = Server::start_at(Path::new(&args[4]), ip, port, bridge.clone())?;
             let dashboard = Dashboard::new();
             let started = Instant::now();
             let s7_rows = |status: station_runtime::snap7::Status| {
                 vec![
-                    ("Listener".into(), format!("127.0.0.1:{port}")),
+                    (
+                        "Listener".into(),
+                        format!("{ip}:{port}  rack {rack}  slot {slot}"),
+                    ),
                     (
                         "Clients / reads".into(),
                         format!("{} / {}", status.clients, status.reads),
@@ -419,7 +430,7 @@ fn main() -> Result<()> {
             );
         }
         _ => bail!(
-            "Usage: station-runtime pack MANIFEST.json MODULE.wat OUTPUT.pkg\n       station-runtime run PROGRAM.pkg [CYCLES]\n       station-runtime s7-run PROGRAM.pkg MAP.json ACTIONS.json\n       station-runtime monitor PROGRAM.pkg MAP.json [PERIOD_MS] [CYCLES]\n       station-runtime serve PROGRAM.pkg MAP.json SNAP7_LIBRARY [PORT] [PERIOD_MS] [CYCLES]\n       station-runtime gateway PROGRAM.pkg MAP.json PROTOCOLS.json [CYCLES]\nServe defaults: loopback port 1102, 100 ms, unlimited cycles (0). Gateway adapters use JSON settings."
+            "Usage: station-runtime pack MANIFEST.json MODULE.wat OUTPUT.pkg\n       station-runtime run PROGRAM.pkg [CYCLES]\n       station-runtime s7-run PROGRAM.pkg MAP.json ACTIONS.json\n       station-runtime monitor PROGRAM.pkg MAP.json [PERIOD_MS] [CYCLES]\n       station-runtime serve PROGRAM.pkg MAP.json SNAP7_LIBRARY [PORT] [PERIOD_MS] [CYCLES] [IP] [RACK] [SLOT]\n       station-runtime gateway PROGRAM.pkg MAP.json PROTOCOLS.json [CYCLES]\nServe defaults: loopback port 1102, 100 ms, unlimited cycles (0). Gateway adapters use JSON settings."
         ),
     }
     Ok(())

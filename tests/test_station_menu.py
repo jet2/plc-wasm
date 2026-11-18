@@ -86,13 +86,15 @@ class StationMenuTests(unittest.TestCase):
                     patch.object(menu.shutil, 'which', return_value='/terminal'), \
                     patch.object(menu.subprocess, 'Popen') as start, \
                     patch.object(menu, 'menu_key', return_value='3'), \
-                    patch('builtins.input', side_effect=['']):
+                    patch('builtins.input', return_value=''):
                 start.return_value.poll.return_value = None
                 menu.launch(package, config)
             settings = root / '.local-validation/protocols.json'
             self.assertEqual(menu.read_json(settings)['modbus'], [])
             self.assertEqual(menu.read_json(settings)['opcua']['port'], 4841)
             self.assertEqual(menu.read_json(settings)['snap7']['port'], 102)
+            endpoint = menu.read_json(settings)['snap7']
+            self.assertEqual((endpoint['ip'], endpoint['rack'], endpoint['slot']), ('127.0.0.1', 0, 2))
             self.assertEqual(config['protocols'], str(settings.resolve()))
             command = start.call_args.args[0]
             if menu.os.name == 'nt':

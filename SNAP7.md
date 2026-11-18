@@ -29,12 +29,12 @@ to be validated on a Linux host.
 ## Running
 
 ```text
-station-runtime serve PROGRAM.pkg MAP.json SNAP7_LIBRARY [PORT] [PERIOD_MS] [CYCLES]
+station-runtime serve PROGRAM.pkg MAP.json SNAP7_LIBRARY [PORT] [PERIOD_MS] [CYCLES] [IP] [RACK] [SLOT]
 ```
 
 Defaults: loopback `127.0.0.1:1102`, 100 ms, unlimited cycles (`0`). Explicit
 ports `1..65535` are accepted, including the standard S7 port `102`; port `0`
-is rejected. Binding remains restricted to localhost. On Linux, low ports may
+is rejected. IP selects the local IPv4 interface. The default client rack and slot are 0 and 2. On Linux, low ports may
 require `CAP_NET_BIND_SERVICE` or appropriate privileges, depending on host
 configuration. The adapter first checks that the port is available: Snap7's Windows
 socket reuse otherwise permits duplicate listeners. Because the native API

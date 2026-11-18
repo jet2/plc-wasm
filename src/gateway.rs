@@ -16,6 +16,18 @@ use std::{
 pub struct Snap7Config {
     pub library: PathBuf,
     pub port: u16,
+    #[serde(default = "localhost")]
+    pub ip: std::net::Ipv4Addr,
+    #[serde(default)]
+    pub rack: u8,
+    #[serde(default = "default_slot")]
+    pub slot: u8,
+}
+fn localhost() -> std::net::Ipv4Addr {
+    std::net::Ipv4Addr::LOCALHOST
+}
+fn default_slot() -> u8 {
+    2
 }
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -59,7 +71,10 @@ pub async fn run(
         .opcua
         .as_ref()
         .map(|settings| format!("opc.tcp://127.0.0.1:{}/", settings.port));
-    let snap7_port = config.snap7.as_ref().map(|settings| settings.port);
+    let snap7_endpoint = config
+        .snap7
+        .as_ref()
+        .map(|s| format!("{}:{}  rack {}  slot {}", s.ip, s.port, s.rack, s.slot));
     let ua = if let Some(settings) = config.opcua {
         let (server, handle) = ua::build(&settings, bridge.clone(), &devices)?;
         // Keep ownership of the bound socket; no bind-probe race.
@@ -70,7 +85,10 @@ pub async fn run(
     };
     let snap7 = config
         .snap7
-        .map(|settings| snap7::Server::start(&settings.library, settings.port, bridge.clone()))
+        .map(|s| {
+            ensure!(s.rack < 8 && s.slot < 32, "invalid S7 rack or slot");
+            snap7::Server::start_at(&s.library, s.ip, s.port, bridge.clone())
+        })
         .transpose()?;
     let (stop, receiver) = tokio::sync::watch::channel(false);
     let workers: Vec<_> = devices
@@ -142,7 +160,7 @@ pub async fn run(
                 Ok(s) => {
                     links.push((
                         "S7 listener".into(),
-                        format!("127.0.0.1:{}", snap7_port.unwrap_or(0)),
+                        snap7_endpoint.clone().unwrap_or_default(),
                     ));
                     links.push((
                         "S7 clients / reads".into(),

@@ -101,6 +101,10 @@ station map):
 
 Set `opcua` to null to disable it. Set `snap7` to an object containing `library`
 (path to `snap7.dll` or `libsnap7.so`) and `port` (for example 102) to enable S7.
+Station menu launches enable S7 even for older settings with a null adapter.
+The optional `ip`, `rack` and `slot` fields default to `127.0.0.1`, `0` and `2`.
+The server binds the selected IPv4 address. Rack and slot are displayed for
+client setup. Snap7 does not enforce a rack/slot filter on incoming sessions.
 Paths in protocol JSON are relative to the process working directory; the menu
 launches from the repository root. Absolute paths are also accepted. Native
 Snap7 still has to match the host architecture. Modbus and OPC UA use Rust
