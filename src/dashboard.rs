@@ -41,10 +41,12 @@ impl Dashboard {
             rows.extend(sections.iter().map(|(_, r)| Constraint::Length(r.len() as u16 + 2)));
             rows.extend([Constraint::Min(0), Constraint::Length(1)]);
             let areas = Layout::vertical(rows).split(frame.area());
+            let station = sections.iter().flat_map(|(_, rows)| rows).find(|(label, _)| label == "Station");
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
                     Span::styled("WPLC  ", Style::new().bold().fg(Color::Green)),
-                    Span::styled(title.to_string(), Style::new().bold()),
+                    Span::styled(station.map(|(_, value)| value.as_str()).unwrap_or_default(), Style::new().bold()),
+                    Span::raw(format!("  {title}")),
                 ])),
                 areas[0],
             );

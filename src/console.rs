@@ -95,6 +95,114 @@ impl Settings {
     }
 }
 
+fn station_description(code: &str, caption: &str) -> Option<String> {
+    let code = code.trim();
+    let caption = caption.trim();
+    if code.is_empty()
+        || !code.bytes().all(|b| b.is_ascii_digit())
+        || caption.is_empty()
+        || caption.chars().any(char::is_control)
+    {
+        return None;
+    }
+    Some(format!("Код {code} — {caption}"))
+}
+
+fn project_description(package: &Path) -> Option<String> {
+    let build = package.ancestors().find(|p| {
+        p.file_name()
+            .is_some_and(|n| n.eq_ignore_ascii_case("wplc-build"))
+    })?;
+    let mut project = None;
+    for entry in fs::read_dir(build.parent()?).ok()? {
+        let path = entry.ok()?.path();
+        if path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("mpr"))
+            && path.is_file()
+        {
+            if project.is_some() {
+                return None;
+            }
+            project = Some(path);
+        }
+    }
+    let bytes = super::bounded_read(project?).ok()?;
+    let text = match std::str::from_utf8(&bytes) {
+        Ok(text) => std::borrow::Cow::Borrowed(text.trim_start_matches('\u{feff}')),
+        Err(_) => {
+            encoding_rs::WINDOWS_1251
+                .decode_without_bom_handling(&bytes)
+                .0
+        }
+    };
+    let (mut code, mut caption, mut station) = ("", "", false);
+    for line in text.lines().map(str::trim) {
+        if line.starts_with('[') {
+            station = line.eq_ignore_ascii_case("[station]");
+        } else if station && let Some((key, value)) = line.split_once('=') {
+            if key.trim().eq_ignore_ascii_case("Code") {
+                code = value;
+            }
+            if key.trim().eq_ignore_ascii_case("Caption") {
+                caption = value;
+            }
+        }
+    }
+    station_description(code, caption)
+}
+
+pub(super) fn station_name(path: &Path, manifest: &str) -> String {
+    manifest
+        .split_once(':')
+        .and_then(|(code, name)| station_description(code, name))
+        .or_else(|| project_description(path))
+        .unwrap_or_else(|| {
+            format!(
+                "Имя и код станции не указаны (пакет: {})",
+                manifest.escape_debug()
+            )
+        })
+}
+
+fn show_station_title(station: &str) {
+    use std::io::IsTerminal;
+    if !io::stdout().is_terminal() {
+        return;
+    }
+    let title: String = format!("WPLC — {station}")
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect();
+    #[cfg(windows)]
+    {
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn SetConsoleTitleW(title: *const u16) -> i32;
+        }
+        let wide: Vec<_> = title.encode_utf16().chain(Some(0)).collect();
+        unsafe {
+            SetConsoleTitleW(wide.as_ptr());
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        use std::io::Write;
+        let _ = write!(io::stdout().lock(), "\x1b]0;{title}\x07");
+    }
+}
+
+fn selected_station(base: &Path, settings: &Settings) -> String {
+    let Some(path) = &settings.package else {
+        return "программа не выбрана".into();
+    };
+    let path = base.join(path);
+    match super::bounded_read(&path).and_then(|bytes| super::Package::decode(&bytes)) {
+        Ok(package) => station_name(&path, &package.manifest.name),
+        Err(e) => format!("Ошибка чтения пакета: {e}"),
+    }
+}
+
 fn choose(
     settings: &Settings,
     file: &Path,
@@ -201,11 +309,16 @@ pub fn run() -> Result<()> {
         }
     });
     let mut launch = settings.autostart && settings.package.is_some();
+    let mut station = selected_station(base, &settings);
+    show_station_title(&station);
     loop {
         if launch {
             launch = false;
             let args = settings.arguments(base)?;
-            println!("ЗАГРУЗКА {}  |  3 + Enter — остановить", args[2]);
+            println!(
+                "ЗАГРУЗКА  |  {station}\n{}  |  3 + Enter — остановить",
+                args[2]
+            );
             let (stop, signal) = tokio::sync::watch::channel(false);
             let worker = thread::spawn(move || super::execute(&args, signal));
             let mut eof = false;
@@ -216,7 +329,7 @@ pub fn run() -> Result<()> {
                 }
                 match rx.recv_timeout(Duration::from_millis(50)) {
                     Ok(s) if s.trim() == "3" => {
-                        println!("ОСТАНОВКА");
+                        println!("ОСТАНОВКА  |  {station}");
                         stop.send_replace(true);
                         worker.thread().unpark();
                         break;
@@ -236,12 +349,12 @@ pub fn run() -> Result<()> {
             }
         }
         println!(
-            "ОСТАНОВЛЕНО  |  {}\n1 — выбрать .pkg   2 — запустить   0 — выход",
+            "ОСТАНОВЛЕНО  |  {station}\n{}\n1 — выбрать .pkg   2 — запустить   0 — выход",
             settings
                 .package
                 .as_deref()
                 .map(|p| p.display().to_string())
-                .unwrap_or_else(|| "программа не выбрана".into())
+                .unwrap_or_default()
         );
         let Ok(line) = rx.recv() else {
             break;
@@ -249,7 +362,11 @@ pub fn run() -> Result<()> {
         match line.trim() {
             "0" => break,
             "1" => match choose(&settings, &file, &rx) {
-                Ok(Some(new)) => settings = new,
+                Ok(Some(new)) => {
+                    settings = new;
+                    station = selected_station(base, &settings);
+                    show_station_title(&station);
+                }
                 Ok(None) => {}
                 Err(e) => eprintln!("Ошибка загрузки: {e:#}"),
             },

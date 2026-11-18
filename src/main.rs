@@ -123,7 +123,7 @@ fn execute(args: &[String], stop: tokio::sync::watch::Receiver<bool>) -> Result<
     match args.get(1).map(String::as_str) {
         Some("gateway") if (5..=6).contains(&args.len()) => {
             let runtime = Runtime::load(Package::decode(&bounded_read(&args[2])?)?)?;
-            let station = runtime.manifest.name.clone();
+            let station = console::station_name(Path::new(&args[2]), &runtime.manifest.name);
             let wasm_bytes = runtime.manifest.memory_bytes;
             let state_bytes = runtime.manifest.outputs.size;
             let inputs = vec![0; runtime.manifest.inputs.size as usize];
@@ -164,7 +164,7 @@ fn execute(args: &[String], stop: tokio::sync::watch::Receiver<bool>) -> Result<
                 "period must be 1..60000 ms"
             );
             let runtime = Runtime::load(Package::decode(&bounded_read(&args[2])?)?)?;
-            let station = runtime.manifest.name.clone();
+            let station = console::station_name(Path::new(&args[2]), &runtime.manifest.name);
             let wasm_bytes = runtime.manifest.memory_bytes;
             let state_bytes = runtime.manifest.outputs.size;
             let inputs = vec![0; runtime.manifest.inputs.size as usize];
@@ -288,7 +288,7 @@ fn execute(args: &[String], stop: tokio::sync::watch::Receiver<bool>) -> Result<
             );
             let started = Instant::now();
             let runtime = Runtime::load(Package::decode(&bounded_read(&args[2])?)?)?;
-            let station = runtime.manifest.name.clone();
+            let station = console::station_name(Path::new(&args[2]), &runtime.manifest.name);
             let inputs = vec![0; runtime.manifest.inputs.size as usize];
             let memory_bytes = runtime.manifest.memory_bytes;
             let state_bytes = runtime.manifest.outputs.size;
